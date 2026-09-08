@@ -113,6 +113,65 @@ function convertToEasternArabicNumerals(text) {
   return text.replace(/[0-9]/g, (d) => easternNumerals[parseInt(d, 10)]);
 }
 
+const ARABIC_STOPWORDS = new Set([
+  "من",
+  "إلى",
+  "عن",
+  "على",
+  "في",
+  "هذا",
+  "هذه",
+  "ذلك",
+  "التي",
+  "الذي",
+  "كان",
+  "قد",
+  "لا",
+  "ما",
+  "مع",
+  "أو",
+  "كل",
+  "بين",
+  "كما",
+  "أي",
+  "منها",
+  "إذ",
+  "إذا",
+  "لكن",
+  "بل",
+  "حتى",
+  "مما",
+  "فإن",
+  "وقد",
+]);
+
+function tokenizeArabicText(text) {
+  if (!text) return [];
+  return text
+    .replace(/[^\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\s]/g, "")
+    .split(/\s+/)
+    .filter((word) => word.length > 0);
+}
+
+function removeArabicStopwords(text) {
+  if (!text) return "";
+  const tokens = tokenizeArabicText(text);
+  const filtered = tokens.filter((token) => !ARABIC_STOPWORDS.has(token));
+  return filtered.join(" ");
+}
+
+function getArabicTextStatistics(text) {
+  if (!text) return { words: 0, characters: 0, arabicCharacters: 0, uniqueWords: 0, stopwordsRemoved: 0 };
+  const tokens = tokenizeArabicText(text);
+  const words = tokens.length;
+  const characters = text.replace(/\s/g, "").length;
+  const arabicMatches = text.match(/[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]/g);
+  const arabicCharacters = arabicMatches ? arabicMatches.length : 0;
+  const uniqueWords = new Set(tokens).size;
+  const stopwordsRemoved = tokens.filter((token) => ARABIC_STOPWORDS.has(token)).length;
+  return { words, characters, arabicCharacters, uniqueWords, stopwordsRemoved };
+}
+
 function detectBarcodes(imagePath) {
   return new Promise((resolve) => {
     const results = [];
@@ -154,7 +213,7 @@ app.get("/", (req, res) => {
   res.json({
     service: "multilingual-ocr-service",
     status: "running",
-    endpoints: ["/health", "/ocr", "/ocr/batch", "/ocr/arabic"],
+    endpoints: ["/health", "/ocr", "/ocr/batch", "/ocr/arabic", "/ocr/arabic/analyze"],
     supportedLanguages: VALID_LANGUAGES,
     maxFileSize: `${MAX_FILE_SIZE / 1024 / 1024}MB`,
   });
@@ -228,6 +287,7 @@ app.post("/ocr", uploadLimiter, upload.single("file"), async (req, res) => {
       const direction = detectTextDirection(cleanedText);
       const normalizedText = arabicDetected ? normalizeArabicText(cleanedText) : cleanedText;
       const easternNumeralsText = convertNumerals ? convertToEasternArabicNumerals(normalizedText) : normalizedText;
+      const statistics = arabicDetected ? getArabicTextStatistics(normalizedText) : null;
       res.json({
         text: cleanedText,
         normalizedText,
@@ -241,6 +301,7 @@ app.post("/ocr", uploadLimiter, upload.single("file"), async (req, res) => {
         tables,
         containsArabic: arabicDetected,
         direction,
+        statistics,
       });
     }
   } catch (err) {
@@ -298,6 +359,7 @@ app.post("/ocr/batch", uploadLimiter, upload.array("files", 10), async (req, res
         const direction = detectTextDirection(cleanedText);
         const normalizedText = arabicDetected ? normalizeArabicText(cleanedText) : cleanedText;
         const easternNumeralsText = convertNumerals ? convertToEasternArabicNumerals(normalizedText) : normalizedText;
+        const statistics = arabicDetected ? getArabicTextStatistics(normalizedText) : null;
         result = {
           text: cleanedText,
           normalizedText,
@@ -311,6 +373,7 @@ app.post("/ocr/batch", uploadLimiter, upload.array("files", 10), async (req, res
           tables,
           containsArabic: arabicDetected,
           direction,
+          statistics,
         };
       }
       results.push({ file: file.originalname, ...result });
@@ -331,13 +394,47 @@ app.post("/ocr/arabic", express.text({ type: "text/plain", limit: "1mb" }), (req
   const direction = detectTextDirection(cleanedText);
   const normalizedText = arabicDetected ? normalizeArabicText(cleanedText) : cleanedText;
   const easternNumeralsText = convertToEasternArabicNumerals(normalizedText);
+  const withoutStopwords = removeArabicStopwords(normalizedText);
+  const statistics = getArabicTextStatistics(normalizedText);
 
   res.json({
     originalText: cleanedText,
     normalizedText,
     easternNumeralsText,
+    withoutStopwords,
     containsArabic: arabicDetected,
     direction,
+    statistics,
+  });
+});
+
+app.post("/ocr/arabic/analyze", express.text({ type: "text/plain", limit: "1mb" }), (req, res) => {
+  const text = req.body || "";
+  const cleanedText = cleanOcrText(text);
+  const arabicDetected = containsArabic(cleanedText);
+  const direction = detectTextDirection(cleanedText);
+  const normalizedText = arabicDetected ? normalizeArabicText(cleanedText) : cleanedText;
+  const easternNumeralsText = convertToEasternArabicNumerals(normalizedText);
+  const withoutStopwords = removeArabicStopwords(normalizedText);
+  const tokens = tokenizeArabicText(normalizedText);
+  const wordFrequency = {};
+  for (const token of tokens) {
+    wordFrequency[token] = (wordFrequency[token] || 0) + 1;
+  }
+  const sortedFrequency = Object.entries(wordFrequency)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 20)
+    .map(([word, count]) => ({ word, count }));
+
+  res.json({
+    originalText: cleanedText,
+    normalizedText,
+    easternNumeralsText,
+    withoutStopwords,
+    containsArabic: arabicDetected,
+    direction,
+    statistics: getArabicTextStatistics(normalizedText),
+    wordFrequency: sortedFrequency,
   });
 });
 
