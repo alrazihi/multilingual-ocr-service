@@ -186,6 +186,21 @@ function validateArabicDots(text) {
     .trim();
 }
 
+function filterNonsenseArabicWords(text) {
+  if (!text) return "";
+  const tokens = tokenizeArabicText(text);
+  const filtered = tokens.filter((token) => {
+    if (token.length === 1) return true;
+    if (token.length > 20) return false;
+    const dotCount = (token.match(/[ًٌٍَُِّْ]/g) || []).length;
+    if (dotCount > token.length * 0.8) return false;
+    const arabicRatio = (token.match(/[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]/g) || []).length / token.length;
+    if (arabicRatio < 0.5) return false;
+    return true;
+  });
+  return filtered.join(" ");
+}
+
 const ARABIC_STOPWORDS = new Set([
   "من",
   "إلى",
@@ -364,7 +379,8 @@ app.post("/ocr", uploadLimiter, upload.single("file"), async (req, res) => {
       const normalizedText = arabicDetected ? normalizeArabicText(cleanedText, { preserveHamza, preserveTaMarbuta, removeDiacritics }) : cleanedText;
       const correctedText = applyCommonArabicOcrCorrections(normalizedText);
       const dotsValidatedText = validateArabicDots(correctedText);
-      const easternNumeralsText = convertNumerals ? convertToEasternArabicNumerals(dotsValidatedText) : dotsValidatedText;
+      const nonsenseFilteredText = filterNonsenseArabicWords(dotsValidatedText);
+      const easternNumeralsText = convertNumerals ? convertToEasternArabicNumerals(nonsenseFilteredText) : nonsenseFilteredText;
       const spacingFixedText = fixArabicSpacing(easternNumeralsText);
       const lamAlefReconstructed = reconstructLamAlef(spacingFixedText);
       const punctuationFixedText = normalizeArabicPunctuation(lamAlefReconstructed);
@@ -374,6 +390,7 @@ app.post("/ocr", uploadLimiter, upload.single("file"), async (req, res) => {
         normalizedText,
         correctedText,
         dotsValidatedText,
+        nonsenseFilteredText,
         easternNumeralsText,
         spacingFixedText,
         lamAlefReconstructed,
@@ -449,7 +466,8 @@ app.post("/ocr/batch", uploadLimiter, upload.array("files", 10), async (req, res
         const normalizedText = arabicDetected ? normalizeArabicText(cleanedText, { preserveHamza, preserveTaMarbuta, removeDiacritics }) : cleanedText;
         const correctedText = applyCommonArabicOcrCorrections(normalizedText);
         const dotsValidatedText = validateArabicDots(correctedText);
-        const easternNumeralsText = convertNumerals ? convertToEasternArabicNumerals(dotsValidatedText) : dotsValidatedText;
+        const nonsenseFilteredText = filterNonsenseArabicWords(dotsValidatedText);
+        const easternNumeralsText = convertNumerals ? convertToEasternArabicNumerals(nonsenseFilteredText) : nonsenseFilteredText;
         const spacingFixedText = fixArabicSpacing(easternNumeralsText);
         const lamAlefReconstructed = reconstructLamAlef(spacingFixedText);
         const punctuationFixedText = normalizeArabicPunctuation(lamAlefReconstructed);
@@ -459,6 +477,7 @@ app.post("/ocr/batch", uploadLimiter, upload.array("files", 10), async (req, res
           normalizedText,
           correctedText,
           dotsValidatedText,
+          nonsenseFilteredText,
           easternNumeralsText,
           spacingFixedText,
           lamAlefReconstructed,
@@ -497,7 +516,8 @@ app.post("/ocr/arabic", express.text({ type: "text/plain", limit: "1mb" }), (req
   const normalizedText = arabicDetected ? normalizeArabicText(cleanedText, { preserveHamza, preserveTaMarbuta, removeDiacritics }) : cleanedText;
   const correctedText = applyCommonArabicOcrCorrections(normalizedText);
   const dotsValidatedText = validateArabicDots(correctedText);
-  const easternNumeralsText = convertToEasternArabicNumerals(dotsValidatedText);
+  const nonsenseFilteredText = filterNonsenseArabicWords(dotsValidatedText);
+  const easternNumeralsText = convertToEasternArabicNumerals(nonsenseFilteredText);
   const spacingFixedText = fixArabicSpacing(easternNumeralsText);
   const lamAlefReconstructed = reconstructLamAlef(spacingFixedText);
   const punctuationFixedText = normalizeArabicPunctuation(lamAlefReconstructed);
@@ -509,6 +529,7 @@ app.post("/ocr/arabic", express.text({ type: "text/plain", limit: "1mb" }), (req
     normalizedText,
     correctedText,
     dotsValidatedText,
+    nonsenseFilteredText,
     easternNumeralsText,
     spacingFixedText,
     lamAlefReconstructed,
@@ -531,7 +552,8 @@ app.post("/ocr/arabic/analyze", express.text({ type: "text/plain", limit: "1mb" 
   const normalizedText = arabicDetected ? normalizeArabicText(cleanedText, { preserveHamza, preserveTaMarbuta, removeDiacritics }) : cleanedText;
   const correctedText = applyCommonArabicOcrCorrections(normalizedText);
   const dotsValidatedText = validateArabicDots(correctedText);
-  const easternNumeralsText = convertToEasternArabicNumerals(dotsValidatedText);
+  const nonsenseFilteredText = filterNonsenseArabicWords(dotsValidatedText);
+  const easternNumeralsText = convertToEasternArabicNumerals(nonsenseFilteredText);
   const spacingFixedText = fixArabicSpacing(easternNumeralsText);
   const lamAlefReconstructed = reconstructLamAlef(spacingFixedText);
   const punctuationFixedText = normalizeArabicPunctuation(lamAlefReconstructed);
@@ -551,6 +573,7 @@ app.post("/ocr/arabic/analyze", express.text({ type: "text/plain", limit: "1mb" 
     normalizedText,
     correctedText,
     dotsValidatedText,
+    nonsenseFilteredText,
     easternNumeralsText,
     spacingFixedText,
     lamAlefReconstructed,
