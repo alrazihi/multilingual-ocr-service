@@ -334,6 +334,7 @@ app.post("/ocr", uploadLimiter, upload.single("file"), async (req, res) => {
   const convertNumerals = req.body.convertNumerals === "true";
   const preserveHamza = req.body.preserveHamza === "true";
   const preserveTaMarbuta = req.body.preserveTaMarbuta === "true";
+  const removeDiacritics = req.body.preserveDiacritics !== "true";
 
   try {
     const ext = path.extname(req.file.originalname).toLowerCase();
@@ -351,7 +352,7 @@ app.post("/ocr", uploadLimiter, upload.single("file"), async (req, res) => {
       const cleanedText = cleanOcrText(result.text);
       const arabicDetected = containsArabic(cleanedText);
       const direction = detectTextDirection(cleanedText);
-      const normalizedText = arabicDetected ? normalizeArabicText(cleanedText, { preserveHamza, preserveTaMarbuta }) : cleanedText;
+        const normalizedText = arabicDetected ? normalizeArabicText(cleanedText, { preserveHamza, preserveTaMarbuta, removeDiacritics }) : cleanedText;
       const correctedText = applyCommonArabicOcrCorrections(normalizedText);
       const easternNumeralsText = convertNumerals ? convertToEasternArabicNumerals(correctedText) : correctedText;
       const spacingFixedText = fixArabicSpacing(easternNumeralsText);
@@ -398,6 +399,7 @@ app.post("/ocr/batch", uploadLimiter, upload.array("files", 10), async (req, res
   const convertNumerals = req.body.convertNumerals === "true";
   const preserveHamza = req.body.preserveHamza === "true";
   const preserveTaMarbuta = req.body.preserveTaMarbuta === "true";
+  const removeDiacritics = req.body.preserveDiacritics !== "true";
 
   const results = [];
 
@@ -433,7 +435,7 @@ app.post("/ocr/batch", uploadLimiter, upload.array("files", 10), async (req, res
         const cleanedText = cleanOcrText(ocrResult.text);
         const arabicDetected = containsArabic(cleanedText);
         const direction = detectTextDirection(cleanedText);
-        const normalizedText = arabicDetected ? normalizeArabicText(cleanedText, { preserveHamza, preserveTaMarbuta }) : cleanedText;
+      const normalizedText = arabicDetected ? normalizeArabicText(cleanedText, { preserveHamza, preserveTaMarbuta, removeDiacritics }) : cleanedText;
         const correctedText = applyCommonArabicOcrCorrections(normalizedText);
         const easternNumeralsText = convertNumerals ? convertToEasternArabicNumerals(correctedText) : correctedText;
         const spacingFixedText = fixArabicSpacing(easternNumeralsText);
@@ -478,7 +480,8 @@ app.post("/ocr/arabic", express.text({ type: "text/plain", limit: "1mb" }), (req
   const direction = detectTextDirection(cleanedText);
   const preserveHamza = req.body.preserveHamza === "true";
   const preserveTaMarbuta = req.body.preserveTaMarbuta === "true";
-  const normalizedText = arabicDetected ? normalizeArabicText(cleanedText, { preserveHamza, preserveTaMarbuta }) : cleanedText;
+  const removeDiacritics = req.body.preserveDiacritics !== "true";
+  const normalizedText = arabicDetected ? normalizeArabicText(cleanedText, { preserveHamza, preserveTaMarbuta, removeDiacritics }) : cleanedText;
   const correctedText = applyCommonArabicOcrCorrections(normalizedText);
   const easternNumeralsText = convertToEasternArabicNumerals(correctedText);
   const spacingFixedText = fixArabicSpacing(easternNumeralsText);
@@ -509,7 +512,8 @@ app.post("/ocr/arabic/analyze", express.text({ type: "text/plain", limit: "1mb" 
   const direction = detectTextDirection(cleanedText);
   const preserveHamza = req.body.preserveHamza === "true";
   const preserveTaMarbuta = req.body.preserveTaMarbuta === "true";
-  const normalizedText = arabicDetected ? normalizeArabicText(cleanedText, { preserveHamza, preserveTaMarbuta }) : cleanedText;
+  const removeDiacritics = req.body.preserveDiacritics !== "true";
+  const normalizedText = arabicDetected ? normalizeArabicText(cleanedText, { preserveHamza, preserveTaMarbuta, removeDiacritics }) : cleanedText;
   const correctedText = applyCommonArabicOcrCorrections(normalizedText);
   const easternNumeralsText = convertToEasternArabicNumerals(correctedText);
   const spacingFixedText = fixArabicSpacing(easternNumeralsText);
