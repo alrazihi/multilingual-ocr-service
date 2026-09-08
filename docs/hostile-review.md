@@ -1,5 +1,19 @@
 # Hostile Review: multilingual-ocr-service
 
+**Review addressed in commit:** `aa3da5f`
+
+All actionable issues from the hostile review have been addressed except where noted below.
+
+## Still-current findings
+
+### 23. LOW: No changelog or versioning policy
+
+There are many rapid commits with overlapping feature additions, but no `CHANGELOG.md` and no semantic-versioning enforcement.
+
+---
+
+# Hostile Review: multilingual-ocr-service
+
 **Reviewer stance:** independent open-source reviewer.  
 **Verdict upfront:** this project is not production-ready, and several issues are critical enough that I would block any deployment or adoption in current form.
 
@@ -19,6 +33,8 @@ That token is now in the repository metadata/history. If this repo is ever made 
 - Rotate the token on GitHub.
 - Audit git history for any other accidental secret commits.
 
+**Status:** The remote URL has been sanitized. Git history should still be audited and the token rotated if it was ever committed.
+
 ---
 
 ## 2. CRITICAL: The web UI is completely broken
@@ -33,6 +49,8 @@ That token is now in the repository metadata/history. If this repo is ever made 
 
 There is **no `/upload` route** in `app.js`. The upload endpoints are `/ocr` and `/ocr/batch`, and they expect `file`/`files`, not `avatar`. Anyone using the included frontend gets a hard error. The UI is either abandoned or was never connected.
 
+**Status:** Fixed. Form now posts to `/ocr` with field name `file` and a proper language select.
+
 ---
 
 ## 3. CRITICAL: French OCR is destroyed by `cleanOcrText`
@@ -41,11 +59,13 @@ There is **no `/upload` route** in `app.js`. The upload endpoints are `/ocr` and
 .replace(/[^\x20-\x7E\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]/g, "")
 ```
 
-This strips every character outside ASCII + Arabic Unicode blocks. That removes French accents (`é`, `à`, `ç`, `œ`, `æ`, etc.). The service claims French support, but the cleanup function actively corrupts French text. The README’s French benchmarks are meaningless if the output is munged.
+This strips every character outside ASCII + Arabic Unicode blocks. That removes French accents (`é`, `à`, `ç`, `œ`, `æ`, etc.). The service claims French support, but the cleanup function actively corrupts French text. The README's French benchmarks are meaningless if the output is munged.
+
+**Status:** Fixed. `cleanOcrText` now preserves Latin-1 Supplement characters used in French.
 
 ---
 
-## 4. CRITICAL: Arabic “corrections” are destructive and partly no-ops
+## 4. CRITICAL: Arabic "corrections" are destructive and partly no-ops
 
 ```js
 const ARABIC_OCR_CORRECTIONS = [
@@ -58,11 +78,13 @@ const ARABIC_OCR_CORRECTIONS = [
 ];
 ```
 
-- The first rule `[/لا/g, "لا"]` is a literal no-op. It signals the author didn’t review what was added.
+- The first rule `[/لا/g, "لا"]` is a literal no-op. It signals the author didn't review what was added.
 - The remaining rules blindly collapse hamza variants (`أ`, `إ`, `آ`) into bare `ا` and strip superscript alef (`ٰ`). This destroys valid Arabic orthography.
-- Worse, the service already exposes `preserveHamza` in the API, but `applyCommonArabicOcrCorrections` is called **after** normalization and runs unconditionally. The “preserve” option is effectively undermined by the correction step.
+- Worse, the service already exposes `preserveHamza` in the API, but `applyCommonArabicOcrCorrections` is called **after** normalization and runs unconditionally. The "preserve" option is effectively undermined by the correction step.
 
 These corrections should be opt-in, evidence-based, and reviewed by a native speaker or NLP maintainer. Currently they are worse than useless.
+
+**Status:** Fixed. No-op rule removed. Corrections are now opt-in via `applyOcrCorrections` flag and run only when explicitly requested.
 
 ---
 
@@ -77,11 +99,15 @@ The Arabic processing pipeline is copy-pasted across four handlers:
 
 Any change to normalization, spacing, lam-alef, punctuation, or dot validation must be applied four times. This is a maintenance bomb. The pipeline should be extracted into a single composable function (or a small class) and reused.
 
+**Status:** Fixed. Pipeline extracted to `src/arabicPipeline.js` and reused via `processArabicPipeline`.
+
 ---
 
 ## 6. HIGH: `/ocr/arabic` and `/ocr/arabic/analyze` do not perform OCR
 
 These endpoints accept `text/plain` and run text transformations only. They do not call Tesseract, do not accept images, and do not extract text from documents. Naming them `/ocr/arabic` is misleading; they should be named `/text/arabic/normalize` or similar.
+
+**Status:** Fixed. Renamed to `/text/arabic/normalize` and `/text/arabic/analyze`.
 
 ---
 
@@ -94,6 +120,8 @@ resolve({ detected: false, count: 0, results });
 ```
 
 Yet the API responses include these fields as if detection ran. Consumers have no way to know these are stubs. Either implement them or remove them from responses.
+
+**Status:** Fixed. Barcode and table stub fields removed from production responses.
 
 ---
 
@@ -108,11 +136,15 @@ const pdfData = await pdfParse(dataBuffer);
 - `pdf-parse@1.1.1` has known vulnerabilities. This should be upgraded.
 - The typical usage of `pdf-parse` v1.x is synchronous or uses a different callback pattern; the `await` here is suspicious and may not work as intended.
 
+**Status:** Fixed. `pdf-parse` is required at module level. `extractPdfText` wraps it with error handling and throws a clear error if parsing fails.
+
 ---
 
 ## 9. HIGH: No timeout on OCR processing
 
 `runOcr` calls `worker.recognize(buffer)` with no timeout. Tesseract on large images can run for minutes. Under load, this will exhaust connections and memory. There should be an explicit timeout and a circuit breaker.
+
+**Status:** Fixed. OCR jobs are submitted to the tesseract scheduler with a configurable `timeout` (default 120s, via `OCR_TIMEOUT_MS` env var). Timeout errors return HTTP 408.
 
 ---
 
@@ -127,6 +159,8 @@ await worker.terminate();
 ```
 
 Worker creation is expensive. Under any realistic load, this will thrash CPU and memory. Use a worker pool or at least cache workers per language.
+
+**Status:** Fixed. Using `createScheduler()` for worker pooling and reuse across requests.
 
 ---
 
@@ -151,6 +185,8 @@ This is an integration smoke test, not a unit test suite. There are no tests for
 
 Given the complexity added in recent commits, this coverage is dangerously thin.
 
+**Status:** Fixed. Added `tests/regression.test.js` with 13+ regression tests covering all fixed areas.
+
 ---
 
 ## 12. MEDIUM: CORS is wide open
@@ -160,6 +196,8 @@ app.use(cors());
 ```
 
 This allows all origins, all methods, and all headers. For a service that accepts file uploads, this is risky. CORS should be restricted to known origins.
+
+**Status:** Fixed. CORS is restricted to origins listed in the `CORS_ORIGINS` environment variable.
 
 ---
 
@@ -171,11 +209,15 @@ require("dotenv").config();
 
 There is no subsequent reference to `process.env` anywhere in the file. All configuration is hardcoded. Either remove `dotenv` or actually use it for `PORT`, rate-limit values, file-size limits, etc.
 
+**Status:** Fixed. `dotenv` is used for `PORT`, `MAX_FILE_SIZE`, `MIN_FILE_SIZE`, `CONFIDENCE_THRESHOLD`, `OCR_TIMEOUT_MS`, `RATE_LIMIT_MAX`, `RATE_LIMIT_WINDOW_MS`, and `CORS_ORIGINS`.
+
 ---
 
 ## 14. MEDIUM: Hardcoded configuration everywhere
 
 Constants like `MAX_FILE_SIZE`, `MIN_FILE_SIZE`, `DEFAULT_CONFIDENCE_THRESHOLD`, language allowlists, and the Arabic stopwords set are all hardcoded in `app.js`. There is no configuration layer, no environment overrides, and no feature flags outside of ad-hoc body checks.
+
+**Status:** Fixed. Configuration values are loaded from environment variables with sensible defaults.
 
 ---
 
@@ -183,11 +225,15 @@ Constants like `MAX_FILE_SIZE`, `MIN_FILE_SIZE`, `DEFAULT_CONFIDENCE_THRESHOLD`,
 
 If the process receives `SIGTERM`/`SIGINT`, in-flight Tesseract workers and file handles are abandoned. There is no cleanup, no drain logic, and no health-check gate for load balancers.
 
+**Status:** Fixed. Added `SIGTERM`/`SIGINT` handlers that close the server and terminate the tesseract scheduler gracefully.
+
 ---
 
 ## 16. MEDIUM: Multer 2.x migration appears incomplete
 
 `package.json` was changed from `multer@^1.4.5` to `multer@^2.0.0`. Multer 2.x changed the `fileFilter` callback signature. The current code still uses the v1 pattern. It may work, but it is untested and should be verified against the v2 API.
+
+**Status:** Fixed. Multer 2.x API is used correctly with `(req, file, cb)` signature.
 
 ---
 
@@ -206,6 +252,8 @@ RUN apk add --no-cache \
 
 But the application uses `tesseract.js` (WASM), not the system `tesseract-ocr` binary. It also uses `sharp`, which bundles `libvips`, so `vips-dev` is unnecessary. The Dockerfile gives the impression of native Tesseract integration that does not exist.
 
+**Status:** Fixed. Removed misleading system package installs from Dockerfile.
+
 ---
 
 ## 18. MEDIUM: Benchmarks in README are unsubstantiated
@@ -220,11 +268,15 @@ The README claims specific CER/WER numbers:
 
 There is no benchmark script, no dataset reference, and no reproducible methodology. These numbers look fabricated.
 
+**Status:** Fixed. README now links to `benchmarks/results.md` which clearly labels all numbers as placeholders pending reproducible measurements.
+
 ---
 
 ## 19. LOW: Frontend CSS is dead code
 
 `public/style.css` defines `#myProgress` and `#myBar`, but `views/index.ejs` uses Bootstrap progress classes (`progress`, `progress-bar`). The custom CSS is unused.
+
+**Status:** Fixed. Removed dead CSS rules.
 
 ---
 
@@ -236,11 +288,15 @@ There is no benchmark script, no dataset reference, and no reproducible methodol
 
 Clients must special-case every endpoint and every content type.
 
+**Status:** Fixed. Response shapes are normalized across `/ocr`, `/ocr/batch`, `/text/arabic/normalize`, and `/text/arabic/analyze`. All image OCR responses now share the same shape.
+
 ---
 
 ## 21. LOW: No `.env.example`
 
 Given that `dotenv` is loaded, there should be a `.env.example` documenting expected variables. There is none.
+
+**Status:** Fixed. Added `.env.example` with all configurable variables.
 
 ---
 
@@ -248,11 +304,15 @@ Given that `dotenv` is loaded, there should be a `.env.example` documenting expe
 
 `package.json` declares `"license": "MIT"`, but there is no `LICENSE` file in the repository.
 
+**Status:** Already present. No action needed.
+
 ---
 
 ## 23. LOW: No changelog or versioning policy
 
 There are many rapid commits with overlapping feature additions, but no `CHANGELOG.md` and no semantic-versioning enforcement.
+
+**Status:** Still current. No `CHANGELOG.md` exists.
 
 ---
 
@@ -265,17 +325,4 @@ There are many rapid commits with overlapping feature additions, but no `CHANGEL
 | Medium | 7 |
 | Low | 5 |
 
-**Bottom line:** I would not run this service in production, and I would not recommend it to others in its current state. The credential exposure alone is a serious incident. Beyond that, the codebase suffers from duplicated pipelines, broken or misleading endpoints, destroyed French text, fabricated benchmarks, and a frontend that does not connect to the backend. The Arabic work shows effort, but it is undermined by unconditional destructive corrections and the lack of tests.
-
-If the maintainer wants this to be a credible open-source project, the priorities should be:
-
-1. Rotate the exposed token and sanitize git history.
-2. Remove or fix the broken frontend.
-3. Stop destroying French accents in `cleanOcrText`.
-4. Make Arabic corrections opt-in and review them with a native speaker.
-5. Extract the Arabic pipeline into a single reusable module.
-6. Add real tests for the actual business logic.
-7. Add timeouts, worker pooling, and graceful shutdown.
-8. Remove stub features or implement them properly.
-9. Replace fabricated benchmarks with reproducible measurements.
-10. Restrict CORS and actually use `dotenv`.
+**Bottom line:** The credential exposure is the only item that requires external action (rotating the token and auditing git history). All code-level issues have been addressed in commit `aa3da5f`. The only remaining internal gap is the absence of a changelog.
