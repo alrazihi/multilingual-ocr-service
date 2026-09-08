@@ -1,59 +1,158 @@
 const express = require("express");
-const app = express();
-const fs = require("fs");
+const cors = require("cors");
+const helmet = require("helmet");
+const morgan = require("morgan");
+const rateLimit = require("express-rate-limit");
 const multer = require("multer");
-const { TesseractWorker } = require("tesseract.js");
+const fs = require("fs");
+const path = require("path");
+require("dotenv").config();
 
-const worker = new TesseractWorker();
+const { createWorker } = require("tesseract.js");
+const sharp = require("sharp");
+
+const app = express();
+const PORT = process.env.PORT || 5000;
+
+app.use(helmet());
+app.use(cors());
+app.use(morgan("combined"));
+app.use(express.json({ limit: "10mb" }));
+
+const uploadLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many uploads, please try again later." },
+});
+
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, "./uploads");
+    const uploadDir = path.join(__dirname, "uploads");
+    if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+    cb(null, uploadDir);
   },
   filename: (req, file, cb) => {
-    cb(null, file.originalname);
+    const ext = path.extname(file.originalname);
+    cb(null, `ocr-${Date.now()}${ext}`);
   },
 });
-app.use(
-  express.urlencoded({
-    extended: true,
-  })
-);
 
-const upload = multer({ storage: storage }).single("avatar");
-
-app.set("view engine", "ejs");
-app.use(express.static("public"));
-
-// routes
-app.get("/", (req, res) => {
-  res.render("index");
+const upload = multer({
+  storage,
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const allowed = [".png", ".jpg", ".jpeg", ".tiff", ".bmp", ".pdf"];
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (allowed.includes(ext)) cb(null, true);
+    else cb(new Error("Unsupported file type"), false);
+  },
 });
-app.post("/upload", (req, res) => {
-  upload(req, res, (err) => {
-    console.log(req.file, req.body.sele);
-    fs.readFile(`./uploads/${req.file.originalname}`, (err, data) => {
-      if (err) return console.log("This is your err", err);
-      //eng+ara+fra
-      worker
-        .recognize(data, req.body.sele, { tessjs_create_pdf: "1" })
-        .progress((progress) => {
-          console.log(progress);
-        })
-        .then((result) => {
-          res.send(result.text);
-          // res.redirect("/download");
-        })
-        .finally(() => worker.terminate());
-    });
+
+app.get("/health", (req, res) => {
+  res.json({ status: "ok", service: "multilingual-ocr-service", timestamp: new Date().toISOString() });
+});
+
+async function preprocessImage(imagePath) {
+  const buffer = await sharp(imagePath)
+    .resize({ width: 2000, withoutEnlargement: true })
+    .grayscale()
+    .normalize()
+    .sharpen()
+    .toBuffer();
+  return buffer;
+}
+
+async function runOcr(buffer, lang = "eng") {
+  const worker = await createWorker(lang, 1, {
+    logger: (m) => console.log(`[tesseract] ${m.status}`),
   });
+  try {
+    const { data } = await worker.recognize(buffer);
+    return data;
+  } finally {
+    await worker.terminate();
+  }
+}
+
+app.post("/ocr", uploadLimiter, upload.single("file"), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+
+  const lang = req.body.lang || "eng";
+  const validLangs = ["eng", "ara", "fra", "eng+ara", "eng+fra", "ara+fra", "eng+ara+fra"];
+  if (!validLangs.includes(lang)) {
+    return res.status(400).json({ error: `Unsupported language: ${lang}` });
+  }
+
+  try {
+    const ext = path.extname(req.file.originalname).toLowerCase();
+    if (ext === ".pdf") {
+      const pdfParse = require("pdf-parse");
+      const dataBuffer = fs.readFileSync(req.file.path);
+      const pdfData = await pdfParse(dataBuffer);
+      res.json({ text: pdfData.text, language: lang, pages: 1 });
+    } else {
+      const buffer = await preprocessImage(req.file.path);
+      const result = await runOcr(buffer, lang);
+      res.json({
+        text: result.text,
+        language: lang,
+        confidence: result.confidence,
+        words: result.words?.length || 0,
+      });
+    }
+  } catch (err) {
+    console.error("OCR error:", err);
+    res.status(500).json({ error: "OCR processing failed", message: err.message });
+  } finally {
+    if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+  }
 });
 
-app.get("/download", (req, res) => {
-  const file = `${__dirname}/tesseract.js-ocr-result.pdf`;
-  res.download(file);
+app.post("/ocr/batch", uploadLimiter, upload.array("files", 10), async (req, res) => {
+  if (!req.files?.length) return res.status(400).json({ error: "No files uploaded" });
+
+  const lang = req.body.lang || "eng";
+  const results = [];
+
+  for (const file of req.files) {
+    try {
+      const ext = path.extname(file.originalname).toLowerCase();
+      let result;
+      if (ext === ".pdf") {
+        const pdfParse = require("pdf-parse");
+        const dataBuffer = fs.readFileSync(file.path);
+        const pdfData = await pdfParse(dataBuffer);
+        result = { text: pdfData.text, language: lang, pages: 1 };
+      } else {
+        const buffer = await preprocessImage(file.path);
+        const ocrResult = await runOcr(buffer, lang);
+        result = {
+          text: ocrResult.text,
+          language: lang,
+          confidence: ocrResult.confidence,
+          words: ocrResult.words?.length || 0,
+        };
+      }
+      results.push({ file: file.originalname, ...result });
+    } catch (err) {
+      results.push({ file: file.originalname, error: err.message });
+    } finally {
+      if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
+    }
+  }
+
+  res.json({ results, processed: results.length });
 });
 
-const PORT = 5000 || process.env.PORT;
-app.listen(PORT, () =>
-  console.log("Hala I'm on port http://localhost:" + PORT)
-);
+app.use((err, req, res, next) => {
+  if (err instanceof multer.MulterError) {
+    return res.status(400).json({ error: `Upload error: ${err.message}` });
+  }
+  res.status(500).json({ error: err.message });
+});
+
+app.listen(PORT, () => {
+  console.log(`OCR service running on http://localhost:${PORT}`);
+});
