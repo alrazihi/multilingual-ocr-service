@@ -1,13 +1,1 @@
-h1 {
-  color: red;
-}
-#myProgress {
-  width: 100%;
-  background-color: grey;
-}
-
-#myBar {
-  width: 1%;
-  height: 30px;
-  background-color: green;
-}
+/* Custom styles removed; using Bootstrap progress classes in views/index.ejs */

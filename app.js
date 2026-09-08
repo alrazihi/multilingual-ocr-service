@@ -6,33 +6,52 @@ const rateLimit = require("express-rate-limit");
 const multer = require("multer");
 const fs = require("fs");
 const path = require("path");
+const { createWorker, createScheduler } = require("tesseract.js");
+const sharp = require("sharp");
 require("dotenv").config();
 
-const { createWorker } = require("tesseract.js");
-const sharp = require("sharp");
+const { processArabicPipeline, tokenizeArabicText, containsArabic, detectTextDirection } = require("./src/arabicPipeline");
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+
+const PORT = parseInt(process.env.PORT || "5000", 10);
+const MAX_FILE_SIZE = parseInt(process.env.MAX_FILE_SIZE || "10485760", 10);
+const MIN_FILE_SIZE = parseInt(process.env.MIN_FILE_SIZE || "1024", 10);
+const DEFAULT_CONFIDENCE_THRESHOLD = parseInt(process.env.CONFIDENCE_THRESHOLD || "60", 10);
+const OCR_TIMEOUT_MS = parseInt(process.env.OCR_TIMEOUT_MS || "120000", 10);
+const RATE_LIMIT_MAX = parseInt(process.env.RATE_LIMIT_MAX || "20", 10);
+const RATE_LIMIT_WINDOW_MS = parseInt(process.env.RATE_LIMIT_WINDOW_MS || "900000", 10);
+const CORS_ORIGINS = process.env.CORS_ORIGINS
+  ? process.env.CORS_ORIGINS.split(",").map((o) => o.trim())
+  : ["http://localhost:3000", "http://localhost:5000"];
+
+const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/tiff", "image/bmp"];
+const ALLOWED_EXTENSIONS = [".png", ".jpg", ".jpeg", ".tiff", ".bmp", ".pdf"];
+const VALID_LANGUAGES = ["eng", "ara", "fra", "eng+ara", "eng+fra", "ara+fra", "eng+ara+fra"];
+
+const corsOptions = {
+  origin: (origin, callback) => {
+    if (!origin || CORS_ORIGINS.includes("*") || CORS_ORIGINS.includes(origin)) {
+      return callback(null, true);
+    }
+    return callback(new Error("Not allowed by CORS"));
+  },
+  methods: ["GET", "POST"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+};
 
 app.use(helmet());
-app.use(cors());
+app.use(cors(corsOptions));
 app.use(morgan("combined"));
 app.use(express.json({ limit: "10mb" }));
 
 const uploadLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 20,
+  windowMs: RATE_LIMIT_WINDOW_MS,
+  max: RATE_LIMIT_MAX,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "Too many uploads, please try again later." },
 });
-
-const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/tiff", "image/bmp"];
-const ALLOWED_EXTENSIONS = [".png", ".jpg", ".jpeg", ".tiff", ".bmp", ".pdf"];
-const MAX_FILE_SIZE = 10 * 1024 * 1024;
-const MIN_FILE_SIZE = 1024;
-const VALID_LANGUAGES = ["eng", "ara", "fra", "eng+ara", "eng+fra", "ara+fra", "eng+ara+fra"];
-const DEFAULT_CONFIDENCE_THRESHOLD = 60;
 
 function validateImageFormat(file) {
   const ext = path.extname(file.originalname).toLowerCase();
@@ -69,221 +88,17 @@ function checkConfidenceThreshold(confidence, threshold = DEFAULT_CONFIDENCE_THR
   return { warning: false };
 }
 
-function cleanOcrText(text) {
-  if (!text) return "";
-  return text
-    .replace(/\s+/g, " ")
-    .replace(/[^\x20-\x7E\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]/g, "")
-    .trim();
-}
+const pdfParse = require("pdf-parse");
 
-function containsArabic(text) {
-  if (!text) return false;
-  const arabicMatches = text.match(/[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]/g);
-  if (!arabicMatches) return false;
-  const totalChars = text.replace(/\s/g, "").length;
-  return arabicMatches.length / totalChars > 0.3;
-}
-
-function detectTextDirection(text) {
-  if (!text) return "ltr";
-  const arabicMatches = text.match(/[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]/g);
-  if (!arabicMatches) return "ltr";
-  const totalChars = text.replace(/\s/g, "").length;
-  const arabicRatio = arabicMatches.length / totalChars;
-  if (arabicRatio > 0.5) return "rtl";
-  if (arabicRatio > 0.1) return "mixed";
-  return "ltr";
-}
-
-function normalizeArabicText(text, options = {}) {
-  if (!text) return "";
-  const { preserveHamza = false, preserveTatweel = false, removeDiacritics = true } = options;
-  let normalized = text;
-  if (!preserveHamza) {
-    normalized = normalized.replace(/[أإآٱ]/g, "ا");
+function extractPdfText(filePath) {
+  try {
+    const dataBuffer = fs.readFileSync(filePath);
+    const pdfData = pdfParse(dataBuffer);
+    return pdfData.text || "";
+  } catch (err) {
+    console.error("PDF parsing error:", err);
+    throw new Error("PDF parsing is currently unavailable");
   }
-  if (!options.preserveTaMarbuta) {
-    normalized = normalized.replace(/ة/g, "ه");
-  }
-  normalized = normalized.replace(/ى/g, "ي");
-  if (!preserveTatweel) {
-    normalized = normalized.replace(/ـ/g, "");
-  }
-  if (removeDiacritics) {
-    normalized = normalized.replace(/[\u064B-\u065F\u0670\u06D6-\u06DC\u06DF-\u06E8\u06EA-\u06ED]/g, "");
-  }
-  return normalized.trim();
-}
-
-function convertToEasternArabicNumerals(text) {
-  if (!text) return "";
-  const easternNumerals = ["٠", "١", "٢", "٣", "٤", "٥", "٦", "٧", "٨", "٩"];
-  return text.replace(/[0-9]/g, (d) => easternNumerals[parseInt(d, 10)]);
-}
-
-function fixArabicSpacing(text) {
-  if (!text) return "";
-  let fixed = text;
-  fixed = fixed.replace(/\s+/g, " ");
-  fixed = fixed.replace(/\s+([،؛.!?])/g, "$1");
-  fixed = fixed.replace(/([،؛.!?])(?=[^\s\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF])/g, "$1 ");
-  fixed = fixed.replace(/([\(\)\[\]\{\}«»""''`])\s*/g, (match, p1) => {
-    const opening = /^[\(\[\{«"''`]$/.test(p1);
-    const closing = /^[\)\]\}.»"''`]$/.test(p1);
-    if (opening) return `${p1} `;
-    if (closing) return ` ${p1}`;
-    return ` ${p1} `;
-  });
-  return fixed.trim();
-}
-
-function normalizeArabicPunctuation(text) {
-  if (!text) return "";
-  let normalized = text;
-  normalized = normalized.replace(/\.{2,}/g, ".");
-  normalized = normalized.replace(/([.!?])\1+/g, "$1");
-  normalized = normalized.replace(/[`'"]+/g, '"');
-  normalized = normalized.replace(/…/g, "...");
-  normalized = normalized.replace(/–/g, "-");
-  normalized = normalized.replace(/—/g, "-");
-  return normalized;
-}
-
-function reconstructLamAlef(text) {
-  if (!text) return "";
-  return text
-    .replace(/ل\s+ا/g, "لا")
-    .replace(/ل\s+أ/g, "لأ")
-    .replace(/ل\s+إ/g, "لإ")
-    .replace(/ل\s+آ/g, "لآ");
-}
-
-const ARABIC_OCR_CORRECTIONS = [
-  [/لا/g, "لا"],
-  [/رٰ/g, "را"],
-  [/ٰ/g, ""],
-  [/أ/g, "ا"],
-  [/إ/g, "ا"],
-  [/آ/g, "ا"],
-];
-
-function applyCommonArabicOcrCorrections(text) {
-  if (!text) return "";
-  let corrected = text;
-  for (const [pattern, replacement] of ARABIC_OCR_CORRECTIONS) {
-    corrected = corrected.replace(pattern, replacement);
-  }
-  return corrected;
-}
-
-function validateArabicDots(text) {
-  if (!text) return "";
-  return text
-    .replace(/[ـ]{2,}/g, "ـ")
-    .replace(/([^\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF])\.{2,}/g, "$1")
-    .replace(/\.{2,}([^\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF])/g, "$1")
-    .trim();
-}
-
-function filterNonsenseArabicWords(text) {
-  if (!text) return "";
-  const tokens = tokenizeArabicText(text);
-  const filtered = tokens.filter((token) => {
-    if (token.length === 1) return true;
-    if (token.length > 20) return false;
-    const dotCount = (token.match(/[ًٌٍَُِّْ]/g) || []).length;
-    if (dotCount > token.length * 0.8) return false;
-    const arabicRatio = (token.match(/[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]/g) || []).length / token.length;
-    if (arabicRatio < 0.5) return false;
-    return true;
-  });
-  return filtered.join(" ");
-}
-
-function enforceRtlDirection(text) {
-  if (!text) return "";
-  const hasArabic = containsArabic(text);
-  if (!hasArabic) return text;
-  const rtlMark = "\u200F";
-  const cleaned = text.replace(/\u200F/g, "").trim();
-  if (/^[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]/.test(cleaned)) {
-    return `${rtlMark}${cleaned}`;
-  }
-  return cleaned;
-}
-
-const ARABIC_STOPWORDS = new Set([
-  "من",
-  "إلى",
-  "عن",
-  "على",
-  "في",
-  "هذا",
-  "هذه",
-  "ذلك",
-  "التي",
-  "الذي",
-  "كان",
-  "قد",
-  "لا",
-  "ما",
-  "مع",
-  "أو",
-  "كل",
-  "بين",
-  "كما",
-  "أي",
-  "منها",
-  "إذ",
-  "إذا",
-  "لكن",
-  "بل",
-  "حتى",
-  "مما",
-  "فإن",
-  "وقد",
-]);
-
-function tokenizeArabicText(text) {
-  if (!text) return [];
-  return text
-    .replace(/[^\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\s]/g, "")
-    .split(/\s+/)
-    .filter((word) => word.length > 0);
-}
-
-function removeArabicStopwords(text) {
-  if (!text) return "";
-  const tokens = tokenizeArabicText(text);
-  const filtered = tokens.filter((token) => !ARABIC_STOPWORDS.has(token));
-  return filtered.join(" ");
-}
-
-function getArabicTextStatistics(text) {
-  if (!text) return { words: 0, characters: 0, arabicCharacters: 0, uniqueWords: 0, stopwordsRemoved: 0 };
-  const tokens = tokenizeArabicText(text);
-  const words = tokens.length;
-  const characters = text.replace(/\s/g, "").length;
-  const arabicMatches = text.match(/[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]/g);
-  const arabicCharacters = arabicMatches ? arabicMatches.length : 0;
-  const uniqueWords = new Set(tokens).size;
-  const stopwordsRemoved = tokens.filter((token) => ARABIC_STOPWORDS.has(token)).length;
-  return { words, characters, arabicCharacters, uniqueWords, stopwordsRemoved };
-}
-
-function detectBarcodes(imagePath) {
-  return new Promise((resolve) => {
-    const results = [];
-    resolve({ detected: false, count: 0, results });
-  });
-}
-
-function detectTables(imagePath) {
-  return new Promise((resolve) => {
-    const tables = [];
-    resolve({ detected: false, count: 0, tables });
-  });
 }
 
 const storage = multer.diskStorage({
@@ -309,19 +124,22 @@ const upload = multer({
   },
 });
 
-app.get("/", (req, res) => {
-  res.json({
-    service: "multilingual-ocr-service",
-    status: "running",
-    endpoints: ["/health", "/ocr", "/ocr/batch", "/ocr/arabic", "/ocr/arabic/analyze"],
-    supportedLanguages: VALID_LANGUAGES,
-    maxFileSize: `${MAX_FILE_SIZE / 1024 / 1024}MB`,
-  });
-});
+let scheduler = null;
 
-app.get("/health", (req, res) => {
-  res.json({ status: "ok", service: "multilingual-ocr-service", timestamp: new Date().toISOString() });
-});
+function getScheduler() {
+  if (!scheduler) {
+    scheduler = createScheduler();
+  }
+  return scheduler;
+}
+
+async function runOcr(buffer, lang = "eng") {
+  const sched = getScheduler();
+  const { data } = await sched.addJob(lang, (worker) => worker.recognize(buffer), {
+    timeout: OCR_TIMEOUT_MS,
+  });
+  return data;
+}
 
 async function preprocessImage(imagePath) {
   const buffer = await sharp(imagePath)
@@ -333,17 +151,55 @@ async function preprocessImage(imagePath) {
   return buffer;
 }
 
-async function runOcr(buffer, lang = "eng") {
-  const worker = await createWorker(lang, 1, {
-    logger: (m) => console.log(`[tesseract] ${m.status}`),
+function buildOcrResponse(result, lang, arabicOptions = {}) {
+  const {
+    convertNumerals = false,
+    preserveHamza = false,
+    preserveTaMarbuta = false,
+    removeDiacritics = true,
+    applyOcrCorrections = false,
+  } = arabicOptions;
+
+  const cleanedText = result.text || "";
+  const confidenceWarning = checkConfidenceThreshold(result.confidence || 0);
+  const arabicDetected = containsArabic(cleanedText);
+  const direction = detectTextDirection(cleanedText);
+  const pipeline = processArabicPipeline(cleanedText, {
+    preserveHamza,
+    preserveTaMarbuta,
+    removeDiacritics,
+    convertNumerals,
+    applyOcrCorrections,
   });
-  try {
-    const { data } = await worker.recognize(buffer);
-    return data;
-  } finally {
-    await worker.terminate();
-  }
+
+  return {
+    text: cleanedText,
+    language: lang,
+    confidence: result.confidence || 0,
+    words: result.words?.length || 0,
+    warning: confidenceWarning.warning,
+    warningMessage: confidenceWarning.message,
+    containsArabic: arabicDetected,
+    direction,
+    ...pipeline,
+  };
 }
+
+const api = { runOcr, extractPdfText, getScheduler, buildOcrResponse, preprocessImage };
+
+app.get("/", (req, res) => {
+  res.json({
+    service: "multilingual-ocr-service",
+    status: "running",
+    endpoints: ["/health", "/ocr", "/ocr/batch", "/text/arabic/normalize", "/text/arabic/analyze"],
+    supportedLanguages: VALID_LANGUAGES,
+    maxFileSize: `${MAX_FILE_SIZE / 1024 / 1024}MB`,
+  });
+});
+
+app.get("/health", (req, res) => {
+  res.json({ status: "ok", service: "multilingual-ocr-service", timestamp: new Date().toISOString() });
+});
 
 app.post("/ocr", uploadLimiter, upload.single("file"), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "No file uploaded" });
@@ -371,59 +227,40 @@ app.post("/ocr", uploadLimiter, upload.single("file"), async (req, res) => {
   const preserveHamza = req.body.preserveHamza === "true";
   const preserveTaMarbuta = req.body.preserveTaMarbuta === "true";
   const removeDiacritics = req.body.preserveDiacritics !== "true";
+  const applyOcrCorrections = req.body.applyOcrCorrections === "true";
 
   try {
     const ext = path.extname(req.file.originalname).toLowerCase();
     if (ext === ".pdf") {
-      const pdfParse = require("pdf-parse");
-      const dataBuffer = fs.readFileSync(req.file.path);
-      const pdfData = await pdfParse(dataBuffer);
-      res.json({ text: cleanOcrText(pdfData.text), language: lang, pages: 1 });
-    } else {
-      const buffer = await preprocessImage(req.file.path);
-      const result = await runOcr(buffer, lang);
-      const confidenceWarning = checkConfidenceThreshold(result.confidence);
-      const barcodes = await detectBarcodes(req.file.path);
-      const tables = await detectTables(req.file.path);
-      const cleanedText = cleanOcrText(result.text);
-      const arabicDetected = containsArabic(cleanedText);
-      const direction = detectTextDirection(cleanedText);
-      const normalizedText = arabicDetected ? normalizeArabicText(cleanedText, { preserveHamza, preserveTaMarbuta, removeDiacritics }) : cleanedText;
-      const correctedText = applyCommonArabicOcrCorrections(normalizedText);
-      const dotsValidatedText = validateArabicDots(correctedText);
-      const nonsenseFilteredText = filterNonsenseArabicWords(dotsValidatedText);
-      const easternNumeralsText = convertNumerals ? convertToEasternArabicNumerals(nonsenseFilteredText) : nonsenseFilteredText;
-      const spacingFixedText = fixArabicSpacing(easternNumeralsText);
-      const lamAlefReconstructed = reconstructLamAlef(spacingFixedText);
-      const punctuationFixedText = normalizeArabicPunctuation(lamAlefReconstructed);
-      const rtlEnforcedText = enforceRtlDirection(punctuationFixedText);
-      const statistics = arabicDetected ? getArabicTextStatistics(correctedText) : null;
-      res.json({
-        text: cleanedText,
-        normalizedText,
-        correctedText,
-        dotsValidatedText,
-        nonsenseFilteredText,
-        easternNumeralsText,
-        spacingFixedText,
-        lamAlefReconstructed,
-        punctuationFixedText,
-        rtlEnforcedText,
-        language: lang,
-        confidence: result.confidence,
-        words: result.words?.length || 0,
-        warning: confidenceWarning.warning,
-        warningMessage: confidenceWarning.message,
-        barcodes,
-        tables,
-        containsArabic: arabicDetected,
-        direction,
-        statistics,
+      const pdfText = api.extractPdfText(req.file.path);
+      const fakeResult = { text: pdfText, confidence: 0, words: [] };
+      const response = api.buildOcrResponse(fakeResult, lang, {
+        convertNumerals,
+        preserveHamza,
+        preserveTaMarbuta,
+        removeDiacritics,
+        applyOcrCorrections,
       });
+      response.pages = 1;
+      res.json(response);
+    } else {
+      const buffer = await api.preprocessImage(req.file.path);
+      const result = await api.runOcr(buffer, lang);
+      res.json(api.buildOcrResponse(result, lang, {
+        convertNumerals,
+        preserveHamza,
+        preserveTaMarbuta,
+        removeDiacritics,
+        applyOcrCorrections,
+      }));
     }
   } catch (err) {
     console.error("OCR error:", err);
-    res.status(500).json({ error: "OCR processing failed", message: err.message });
+    if (err.message && err.message.includes("timeout")) {
+      res.status(408).json({ error: "OCR processing timed out", message: err.message });
+    } else {
+      res.status(500).json({ error: "OCR processing failed", message: err.message });
+    }
   } finally {
     if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
   }
@@ -442,6 +279,7 @@ app.post("/ocr/batch", uploadLimiter, upload.array("files", 10), async (req, res
   const preserveHamza = req.body.preserveHamza === "true";
   const preserveTaMarbuta = req.body.preserveTaMarbuta === "true";
   const removeDiacritics = req.body.preserveDiacritics !== "true";
+  const applyOcrCorrections = req.body.applyOcrCorrections === "true";
 
   const results = [];
 
@@ -464,53 +302,21 @@ app.post("/ocr/batch", uploadLimiter, upload.array("files", 10), async (req, res
       const ext = path.extname(file.originalname).toLowerCase();
       let result;
       if (ext === ".pdf") {
-        const pdfParse = require("pdf-parse");
-        const dataBuffer = fs.readFileSync(file.path);
-        const pdfData = await pdfParse(dataBuffer);
-        result = { text: cleanOcrText(pdfData.text), language: lang, pages: 1 };
+        const pdfText = api.extractPdfText(file.path);
+        result = { text: pdfText, confidence: 0, words: [] };
       } else {
-        const buffer = await preprocessImage(file.path);
-        const ocrResult = await runOcr(buffer, lang);
-        const confidenceWarning = checkConfidenceThreshold(ocrResult.confidence);
-        const barcodes = await detectBarcodes(file.path);
-        const tables = await detectTables(file.path);
-        const cleanedText = cleanOcrText(ocrResult.text);
-        const arabicDetected = containsArabic(cleanedText);
-        const direction = detectTextDirection(cleanedText);
-        const normalizedText = arabicDetected ? normalizeArabicText(cleanedText, { preserveHamza, preserveTaMarbuta, removeDiacritics }) : cleanedText;
-        const correctedText = applyCommonArabicOcrCorrections(normalizedText);
-        const dotsValidatedText = validateArabicDots(correctedText);
-        const nonsenseFilteredText = filterNonsenseArabicWords(dotsValidatedText);
-        const easternNumeralsText = convertNumerals ? convertToEasternArabicNumerals(nonsenseFilteredText) : nonsenseFilteredText;
-        const spacingFixedText = fixArabicSpacing(easternNumeralsText);
-        const lamAlefReconstructed = reconstructLamAlef(spacingFixedText);
-        const punctuationFixedText = normalizeArabicPunctuation(lamAlefReconstructed);
-        const rtlEnforcedText = enforceRtlDirection(punctuationFixedText);
-        const statistics = arabicDetected ? getArabicTextStatistics(correctedText) : null;
-        result = {
-          text: cleanedText,
-          normalizedText,
-          correctedText,
-          dotsValidatedText,
-          nonsenseFilteredText,
-          easternNumeralsText,
-          spacingFixedText,
-          lamAlefReconstructed,
-          punctuationFixedText,
-          rtlEnforcedText,
-          language: lang,
-          confidence: ocrResult.confidence,
-          words: ocrResult.words?.length || 0,
-          warning: confidenceWarning.warning,
-          warningMessage: confidenceWarning.message,
-          barcodes,
-          tables,
-          containsArabic: arabicDetected,
-          direction,
-          statistics,
-        };
+        const buffer = await api.preprocessImage(file.path);
+        result = await api.runOcr(buffer, lang);
       }
-      results.push({ file: file.originalname, ...result });
+      const response = api.buildOcrResponse(result, lang, {
+        convertNumerals,
+        preserveHamza,
+        preserveTaMarbuta,
+        removeDiacritics,
+        applyOcrCorrections,
+      });
+      if (ext === ".pdf") response.pages = 1;
+      results.push({ file: file.originalname, ...response });
     } catch (err) {
       results.push({ file: file.originalname, error: err.message });
     } finally {
@@ -521,63 +327,45 @@ app.post("/ocr/batch", uploadLimiter, upload.array("files", 10), async (req, res
   res.json({ results, processed: results.length });
 });
 
-app.post("/ocr/arabic", express.text({ type: "text/plain", limit: "1mb" }), (req, res) => {
+app.post("/text/arabic/normalize", express.text({ type: "text/plain", limit: "1mb" }), (req, res) => {
   const text = req.body || "";
-  const cleanedText = cleanOcrText(text);
-  const arabicDetected = containsArabic(cleanedText);
-  const direction = detectTextDirection(cleanedText);
-  const preserveHamza = req.body.preserveHamza === "true";
-  const preserveTaMarbuta = req.body.preserveTaMarbuta === "true";
-  const removeDiacritics = req.body.preserveDiacritics !== "true";
-  const normalizedText = arabicDetected ? normalizeArabicText(cleanedText, { preserveHamza, preserveTaMarbuta, removeDiacritics }) : cleanedText;
-  const correctedText = applyCommonArabicOcrCorrections(normalizedText);
-  const dotsValidatedText = validateArabicDots(correctedText);
-  const nonsenseFilteredText = filterNonsenseArabicWords(dotsValidatedText);
-  const easternNumeralsText = convertToEasternArabicNumerals(nonsenseFilteredText);
-  const spacingFixedText = fixArabicSpacing(easternNumeralsText);
-  const lamAlefReconstructed = reconstructLamAlef(spacingFixedText);
-  const punctuationFixedText = normalizeArabicPunctuation(lamAlefReconstructed);
-  const rtlEnforcedText = enforceRtlDirection(punctuationFixedText);
-  const withoutStopwords = removeArabicStopwords(normalizedText);
-  const statistics = getArabicTextStatistics(normalizedText);
+  const query = req.query;
+
+  const convertNumerals = query.convertNumerals === "true";
+  const preserveHamza = query.preserveHamza === "true";
+  const preserveTaMarbuta = query.preserveTaMarbuta === "true";
+  const removeDiacritics = query.preserveDiacritics !== "true";
+  const applyOcrCorrections = query.applyOcrCorrections === "true";
+
+  const pipeline = processArabicPipeline(text, {
+    preserveHamza,
+    preserveTaMarbuta,
+    removeDiacritics,
+    convertNumerals,
+    applyOcrCorrections,
+  });
 
   res.json({
-    originalText: cleanedText,
-    normalizedText,
-    correctedText,
-    dotsValidatedText,
-    nonsenseFilteredText,
-    easternNumeralsText,
-    spacingFixedText,
-    lamAlefReconstructed,
-    punctuationFixedText,
-    rtlEnforcedText,
-    withoutStopwords,
-    containsArabic: arabicDetected,
-    direction,
-    statistics,
+    ...pipeline,
+    language: "ara",
   });
 });
 
-app.post("/ocr/arabic/analyze", express.text({ type: "text/plain", limit: "1mb" }), (req, res) => {
+app.post("/text/arabic/analyze", express.text({ type: "text/plain", limit: "1mb" }), (req, res) => {
   const text = req.body || "";
-  const cleanedText = cleanOcrText(text);
-  const arabicDetected = containsArabic(cleanedText);
-  const direction = detectTextDirection(cleanedText);
-  const preserveHamza = req.body.preserveHamza === "true";
-  const preserveTaMarbuta = req.body.preserveTaMarbuta === "true";
-  const removeDiacritics = req.body.preserveDiacritics !== "true";
-  const normalizedText = arabicDetected ? normalizeArabicText(cleanedText, { preserveHamza, preserveTaMarbuta, removeDiacritics }) : cleanedText;
-  const correctedText = applyCommonArabicOcrCorrections(normalizedText);
-  const dotsValidatedText = validateArabicDots(correctedText);
-  const nonsenseFilteredText = filterNonsenseArabicWords(dotsValidatedText);
-  const easternNumeralsText = convertToEasternArabicNumerals(nonsenseFilteredText);
-  const spacingFixedText = fixArabicSpacing(easternNumeralsText);
-  const lamAlefReconstructed = reconstructLamAlef(spacingFixedText);
-  const punctuationFixedText = normalizeArabicPunctuation(lamAlefReconstructed);
-  const rtlEnforcedText = enforceRtlDirection(punctuationFixedText);
-  const withoutStopwords = removeArabicStopwords(normalizedText);
-  const tokens = tokenizeArabicText(normalizedText);
+  const query = req.query;
+
+  const preserveHamza = query.preserveHamza === "true";
+  const preserveTaMarbuta = query.preserveTaMarbuta === "true";
+  const removeDiacritics = query.preserveDiacritics !== "true";
+
+  const pipeline = processArabicPipeline(text, {
+    preserveHamza,
+    preserveTaMarbuta,
+    removeDiacritics,
+  });
+
+  const tokens = tokenizeArabicText(pipeline.normalizedText);
   const wordFrequency = {};
   for (const token of tokens) {
     wordFrequency[token] = (wordFrequency[token] || 0) + 1;
@@ -588,20 +376,8 @@ app.post("/ocr/arabic/analyze", express.text({ type: "text/plain", limit: "1mb" 
     .map(([word, count]) => ({ word, count }));
 
   res.json({
-    originalText: cleanedText,
-    normalizedText,
-    correctedText,
-    dotsValidatedText,
-    nonsenseFilteredText,
-    easternNumeralsText,
-    spacingFixedText,
-    lamAlefReconstructed,
-    punctuationFixedText,
-    rtlEnforcedText,
-    withoutStopwords,
-    containsArabic: arabicDetected,
-    direction,
-    statistics: getArabicTextStatistics(normalizedText),
+    ...pipeline,
+    language: "ara",
     wordFrequency: sortedFrequency,
   });
 });
@@ -613,6 +389,28 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: err.message });
 });
 
-app.listen(PORT, () => {
-  console.log(`OCR service running on http://localhost:${PORT}`);
-});
+function gracefulShutdown() {
+  console.log("Received shutdown signal, draining...");
+  app.close(() => {
+    console.log("HTTP server closed");
+    if (scheduler) {
+      scheduler.terminate();
+    }
+    process.exit(0);
+  });
+  setTimeout(() => {
+    console.error("Forced shutdown due to timeout");
+    process.exit(1);
+  }, 10000);
+}
+
+process.on("SIGTERM", gracefulShutdown);
+process.on("SIGINT", gracefulShutdown);
+
+module.exports = { app, ...api };
+
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`OCR service running on http://localhost:${PORT}`);
+  });
+}

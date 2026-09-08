@@ -69,11 +69,9 @@ curl http://localhost:5000/health
 
 ## Benchmarks
 
-| Language | CER | WER | Notes |
-|----------|-----|-----|-------|
-| English | 4.2% | 11.8% | Standard printed text |
-| Arabic | 6.8% | 18.5% | RTL preprocessing included |
-| French | 5.1% | 14.2% | Accent handling included |
+Benchmark numbers will be added here once reproducible measurements are available.
+See `benchmarks/results.md` for placeholder data and methodology notes.
+
 
 ## Docker
 

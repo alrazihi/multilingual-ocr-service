@@ -1,34 +1,36 @@
 # Benchmarks
 
-## ICDAR 2015 Results
+> **Note:** The numbers below are illustrative placeholders. They have not been produced by a reproducible benchmark run. Replace with real measurements before citing them publicly.
+
+## Placeholder Results
 
 | Language | CER | WER | Notes |
 |----------|-----|-----|-------|
-| English | 0.042 | 0.118 | Standard printed text |
-| Arabic | 0.068 | 0.185 | RTL preprocessing included |
-| French | 0.051 | 0.142 | Accent handling included |
+| English | TBD | TBD | Standard printed text |
+| Arabic | TBD | TBD | RTL preprocessing included |
+| French | TBD | TBD | Accent handling included |
 
-## Comparison
+## Placeholder Comparison
 
 | Engine | English | Arabic | French |
 |--------|---------|--------|--------|
-| multilingual-ocr-service | 4.2% | 6.8% | 5.1% |
-| Tesseract.js baseline | 5.1% | 8.2% | 6.3% |
-| Google Vision API | 3.8% | 5.5% | 4.4% |
+| multilingual-ocr-service | TBD | TBD | TBD |
+| Tesseract.js baseline | TBD | TBD | TBD |
+| Google Vision API | TBD | TBD | TBD |
 
 ## Methodology
 
-- Dataset: ICDAR 2015 Robust Reading Competition
+- Dataset: TBD
 - Metrics: Character Error Rate (CER), Word Error Rate (WER)
 - Preprocessing: binarization, denoising, deskewing, contrast normalization
-- Hardware: Node.js 20, Tesseract.js 5.0, 4 CPU cores
+- Hardware: TBD
 - Languages: eng, ara, fra
 
 ## Throughput
 
 | Operation | Avg Time | Notes |
 |-----------|----------|-------|
-| Single image (1MP) | ~850ms | English text |
-| Single image (1MP) | ~1.2s | Arabic text |
-| PDF page (A4) | ~2.1s | Text-only PDF |
-| Batch (10 images) | ~8.5s | Parallel processing |
+| Single image (1MP) | TBD | English text |
+| Single image (1MP) | TBD | Arabic text |
+| PDF page (A4) | TBD | Text-only PDF |
+| Batch (10 images) | TBD | Parallel processing |
