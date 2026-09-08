@@ -150,6 +150,16 @@ const upload = multer({
   },
 });
 
+app.get("/", (req, res) => {
+  res.json({
+    service: "multilingual-ocr-service",
+    status: "running",
+    endpoints: ["/health", "/ocr", "/ocr/batch", "/ocr/arabic"],
+    supportedLanguages: VALID_LANGUAGES,
+    maxFileSize: `${MAX_FILE_SIZE / 1024 / 1024}MB`,
+  });
+});
+
 app.get("/health", (req, res) => {
   res.json({ status: "ok", service: "multilingual-ocr-service", timestamp: new Date().toISOString() });
 });
