@@ -77,6 +77,42 @@ function cleanOcrText(text) {
     .trim();
 }
 
+function containsArabic(text) {
+  if (!text) return false;
+  const arabicMatches = text.match(/[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]/g);
+  if (!arabicMatches) return false;
+  const totalChars = text.replace(/\s/g, "").length;
+  return arabicMatches.length / totalChars > 0.3;
+}
+
+function detectTextDirection(text) {
+  if (!text) return "ltr";
+  const arabicMatches = text.match(/[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]/g);
+  if (!arabicMatches) return "ltr";
+  const totalChars = text.replace(/\s/g, "").length;
+  const arabicRatio = arabicMatches.length / totalChars;
+  if (arabicRatio > 0.5) return "rtl";
+  if (arabicRatio > 0.1) return "mixed";
+  return "ltr";
+}
+
+function normalizeArabicText(text) {
+  if (!text) return "";
+  return text
+    .replace(/[أإآٱ]/g, "ا")
+    .replace(/ة/g, "ه")
+    .replace(/ى/g, "ي")
+    .replace(/ـ/g, "")
+    .replace(/[\u064B-\u065F\u0670\u06D6-\u06DC\u06DF-\u06E8\u06EA-\u06ED]/g, "")
+    .trim();
+}
+
+function convertToEasternArabicNumerals(text) {
+  if (!text) return "";
+  const easternNumerals = ["٠", "١", "٢", "٣", "٤", "٥", "٦", "٧", "٨", "٩"];
+  return text.replace(/[0-9]/g, (d) => easternNumerals[parseInt(d, 10)]);
+}
+
 function detectBarcodes(imagePath) {
   return new Promise((resolve) => {
     const results = [];
@@ -162,6 +198,8 @@ app.post("/ocr", uploadLimiter, upload.single("file"), async (req, res) => {
     return res.status(400).json({ error: langError });
   }
 
+  const convertNumerals = req.body.convertNumerals === "true";
+
   try {
     const ext = path.extname(req.file.originalname).toLowerCase();
     if (ext === ".pdf") {
@@ -175,8 +213,15 @@ app.post("/ocr", uploadLimiter, upload.single("file"), async (req, res) => {
       const confidenceWarning = checkConfidenceThreshold(result.confidence);
       const barcodes = await detectBarcodes(req.file.path);
       const tables = await detectTables(req.file.path);
+      const cleanedText = cleanOcrText(result.text);
+      const arabicDetected = containsArabic(cleanedText);
+      const direction = detectTextDirection(cleanedText);
+      const normalizedText = arabicDetected ? normalizeArabicText(cleanedText) : cleanedText;
+      const easternNumeralsText = convertNumerals ? convertToEasternArabicNumerals(normalizedText) : normalizedText;
       res.json({
-        text: cleanOcrText(result.text),
+        text: cleanedText,
+        normalizedText,
+        easternNumeralsText,
         language: lang,
         confidence: result.confidence,
         words: result.words?.length || 0,
@@ -184,6 +229,8 @@ app.post("/ocr", uploadLimiter, upload.single("file"), async (req, res) => {
         warningMessage: confidenceWarning.message,
         barcodes,
         tables,
+        containsArabic: arabicDetected,
+        direction,
       });
     }
   } catch (err) {
@@ -202,6 +249,8 @@ app.post("/ocr/batch", uploadLimiter, upload.array("files", 10), async (req, res
   if (langError) {
     return res.status(400).json({ error: langError });
   }
+
+  const convertNumerals = req.body.convertNumerals === "true";
 
   const results = [];
 
@@ -234,8 +283,15 @@ app.post("/ocr/batch", uploadLimiter, upload.array("files", 10), async (req, res
         const confidenceWarning = checkConfidenceThreshold(ocrResult.confidence);
         const barcodes = await detectBarcodes(file.path);
         const tables = await detectTables(file.path);
+        const cleanedText = cleanOcrText(ocrResult.text);
+        const arabicDetected = containsArabic(cleanedText);
+        const direction = detectTextDirection(cleanedText);
+        const normalizedText = arabicDetected ? normalizeArabicText(cleanedText) : cleanedText;
+        const easternNumeralsText = convertNumerals ? convertToEasternArabicNumerals(normalizedText) : normalizedText;
         result = {
-          text: cleanOcrText(ocrResult.text),
+          text: cleanedText,
+          normalizedText,
+          easternNumeralsText,
           language: lang,
           confidence: ocrResult.confidence,
           words: ocrResult.words?.length || 0,
@@ -243,6 +299,8 @@ app.post("/ocr/batch", uploadLimiter, upload.array("files", 10), async (req, res
           warningMessage: confidenceWarning.message,
           barcodes,
           tables,
+          containsArabic: arabicDetected,
+          direction,
         };
       }
       results.push({ file: file.originalname, ...result });
@@ -254,6 +312,23 @@ app.post("/ocr/batch", uploadLimiter, upload.array("files", 10), async (req, res
   }
 
   res.json({ results, processed: results.length });
+});
+
+app.post("/ocr/arabic", express.text({ type: "text/plain", limit: "1mb" }), (req, res) => {
+  const text = req.body || "";
+  const cleanedText = cleanOcrText(text);
+  const arabicDetected = containsArabic(cleanedText);
+  const direction = detectTextDirection(cleanedText);
+  const normalizedText = arabicDetected ? normalizeArabicText(cleanedText) : cleanedText;
+  const easternNumeralsText = convertToEasternArabicNumerals(normalizedText);
+
+  res.json({
+    originalText: cleanedText,
+    normalizedText,
+    easternNumeralsText,
+    containsArabic: arabicDetected,
+    direction,
+  });
 });
 
 app.use((err, req, res, next) => {
