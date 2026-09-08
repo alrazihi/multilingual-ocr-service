@@ -1,4 +1,4 @@
-const express = require("express");
+﻿const express = require("express");
 const cors = require("cors");
 const helmet = require("helmet");
 const morgan = require("morgan");
@@ -27,6 +27,21 @@ const uploadLimiter = rateLimit({
   message: { error: "Too many uploads, please try again later." },
 });
 
+const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/tiff", "image/bmp"];
+const ALLOWED_EXTENSIONS = [".png", ".jpg", ".jpeg", ".tiff", ".bmp", ".pdf"];
+const MAX_FILE_SIZE = 10 * 1024 * 1024;
+
+function validateImageFormat(file) {
+  const ext = path.extname(file.originalname).toLowerCase();
+  if (!ALLOWED_EXTENSIONS.includes(ext)) {
+    return `Unsupported file extension: ${ext}. Allowed: ${ALLOWED_EXTENSIONS.join(", ")}`;
+  }
+  if (file.mimetype && !ALLOWED_IMAGE_TYPES.includes(file.mimetype) && file.mimetype !== "application/pdf") {
+    return `Unsupported MIME type: ${file.mimetype}`;
+  }
+  return null;
+}
+
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     const uploadDir = path.join(__dirname, "uploads");
@@ -41,7 +56,7 @@ const storage = multer.diskStorage({
 
 const upload = multer({
   storage,
-  limits: { fileSize: 10 * 1024 * 1024 },
+  limits: { fileSize: MAX_FILE_SIZE },
   fileFilter: (req, file, cb) => {
     const allowed = [".png", ".jpg", ".jpeg", ".tiff", ".bmp", ".pdf"];
     const ext = path.extname(file.originalname).toLowerCase();
@@ -79,9 +94,16 @@ async function runOcr(buffer, lang = "eng") {
 app.post("/ocr", uploadLimiter, upload.single("file"), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
+  const formatError = validateImageFormat(req.file);
+  if (formatError) {
+    if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+    return res.status(400).json({ error: formatError });
+  }
+
   const lang = req.body.lang || "eng";
   const validLangs = ["eng", "ara", "fra", "eng+ara", "eng+fra", "ara+fra", "eng+ara+fra"];
   if (!validLangs.includes(lang)) {
+    if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
     return res.status(400).json({ error: `Unsupported language: ${lang}` });
   }
 
@@ -117,6 +139,13 @@ app.post("/ocr/batch", uploadLimiter, upload.array("files", 10), async (req, res
   const results = [];
 
   for (const file of req.files) {
+    const formatError = validateImageFormat(file);
+    if (formatError) {
+      results.push({ file: file.originalname, error: formatError });
+      if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
+      continue;
+    }
+
     try {
       const ext = path.extname(file.originalname).toLowerCase();
       let result;
