@@ -11,6 +11,7 @@ const sharp = require("sharp");
 require("dotenv").config();
 
 const { processArabicPipeline, tokenizeArabicText, containsArabic, detectTextDirection } = require("./src/arabicPipeline");
+const { processFrenchPipeline } = require("./src/frenchPipeline");
 
 const app = express();
 
@@ -191,7 +192,7 @@ app.get("/", (req, res) => {
   res.json({
     service: "multilingual-ocr-service",
     status: "running",
-    endpoints: ["/health", "/ocr", "/ocr/batch", "/text/arabic/normalize", "/text/arabic/analyze"],
+    endpoints: ["/health", "/ocr", "/ocr/batch", "/text/arabic/normalize", "/text/arabic/analyze", "/text/french/normalize", "/text/french/analyze"],
     supportedLanguages: VALID_LANGUAGES,
     maxFileSize: `${MAX_FILE_SIZE / 1024 / 1024}MB`,
   });
@@ -379,6 +380,28 @@ app.post("/text/arabic/analyze", express.text({ type: "text/plain", limit: "1mb"
     ...pipeline,
     language: "ara",
     wordFrequency: sortedFrequency,
+    morphologicalHints: pipeline.morphologicalHints,
+    summary: pipeline.summary,
+  });
+});
+
+app.post("/text/french/normalize", express.text({ type: "text/plain", limit: "1mb" }), (req, res) => {
+  const text = req.body || "";
+  const pipeline = processFrenchPipeline(text);
+
+  res.json({
+    ...pipeline,
+    language: "fra",
+  });
+});
+
+app.post("/text/french/analyze", express.text({ type: "text/plain", limit: "1mb" }), (req, res) => {
+  const text = req.body || "";
+  const pipeline = processFrenchPipeline(text);
+
+  res.json({
+    ...pipeline,
+    language: "fra",
   });
 });
 

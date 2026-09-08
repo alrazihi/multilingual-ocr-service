@@ -197,6 +197,58 @@ function cleanOcrText(text) {
     .trim();
 }
 
+const ARABIC_PREFIXES = new Set(["ال", "لل", "و", "ف", "ب", "ك", "ل", "ي", "ت", "ن", "س", "أ", "إ", "آ", "م", "ه", "ها", "هم", "هن", "كم", "كن", "نا"]);
+const ARABIC_SUFFIXES = new Set(["ون", "ات", "ين", "ان", "تا", "تين", "ات", "اء", "و", "ا", "ة", "ه", "ها", "هم", "هن", "كم", "كن", "نا", "ي"]);
+
+function getArabicMorphologicalHints(text) {
+  if (!text) return { prefixes: [], suffixes: [], likelyRoots: [] };
+  const tokens = tokenizeArabicText(text);
+  const prefixes = [];
+  const suffixes = [];
+  const likelyRoots = [];
+
+  for (const token of tokens) {
+    if (token.length < 3) continue;
+    for (const prefix of ARABIC_PREFIXES) {
+      if (token.startsWith(prefix) && token.length > prefix.length + 1) {
+        prefixes.push({ token, prefix, remaining: token.slice(prefix.length) });
+        break;
+      }
+    }
+    for (const suffix of ARABIC_SUFFIXES) {
+      if (token.endsWith(suffix) && token.length > suffix.length + 1) {
+        suffixes.push({ token, suffix, remaining: token.slice(0, -suffix.length) });
+        break;
+      }
+    }
+    if (token.length >= 3 && token.length <= 6 && !prefixes.some((p) => p.token === token) && !suffixes.some((s) => s.token === token)) {
+      likelyRoots.push(token);
+    }
+  }
+
+  return {
+    prefixes: prefixes.slice(0, 20),
+    suffixes: suffixes.slice(0, 20),
+    likelyRoots: [...new Set(likelyRoots)].slice(0, 20),
+  };
+}
+
+function summarizeArabicText(text, maxSentences = 3) {
+  if (!text) return "";
+  const sentences = text.replace(/[\.!?؟]+/g, ".").split(".").filter((s) => s.trim().length > 0);
+  if (sentences.length <= maxSentences) return text.trim();
+  const scored = sentences.map((sentence, index) => {
+    const words = sentence.trim().split(/\s+/);
+    const wordCount = words.length;
+    const hasNumbers = (sentence.match(/[0-9]/g) || []).length;
+    const score = wordCount - hasNumbers * 0.5 + (index === 0 ? 2 : 0);
+    return { sentence: sentence.trim(), score, index };
+  });
+  scored.sort((a, b) => b.score - a.score);
+  const topSentences = scored.slice(0, maxSentences).sort((a, b) => a.index - b.index);
+  return topSentences.map((s) => s.sentence).join(". ") + ".";
+}
+
 function processArabicPipeline(text, options = {}) {
   const {
     preserveHamza = false,
@@ -222,6 +274,8 @@ function processArabicPipeline(text, options = {}) {
   const rtlEnforcedText = enforceRtlDirection(punctuationFixedText);
   const withoutStopwords = removeArabicStopwords(normalizedText);
   const statistics = getArabicTextStatistics(normalizedText);
+  const morphologicalHints = arabicDetected ? getArabicMorphologicalHints(normalizedText) : null;
+  const summary = arabicDetected ? summarizeArabicText(rtlEnforcedText) : null;
 
   return {
     text: cleanedText,
@@ -238,6 +292,8 @@ function processArabicPipeline(text, options = {}) {
     containsArabic: arabicDetected,
     direction,
     statistics,
+    morphologicalHints,
+    summary,
   };
 }
 
@@ -255,6 +311,8 @@ module.exports = {
   removeArabicStopwords,
   tokenizeArabicText,
   getArabicTextStatistics,
+  getArabicMorphologicalHints,
+  summarizeArabicText,
   containsArabic,
   detectTextDirection,
   cleanOcrText,

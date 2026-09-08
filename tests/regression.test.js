@@ -6,6 +6,7 @@ const path = require("path");
 
 const { app } = require("../app");
 const { processArabicPipeline, cleanOcrText } = require("../src/arabicPipeline");
+const { processFrenchPipeline } = require("../src/frenchPipeline");
 
 describe("OCR Service Regression Tests", () => {
   let server;
@@ -253,6 +254,39 @@ describe("OCR Service Regression Tests", () => {
       const scheduler1 = appModule.getScheduler();
       const scheduler2 = appModule.getScheduler();
       assert.strictEqual(scheduler1, scheduler2, "Scheduler should be reused across calls");
+    });
+  });
+
+  describe("French pipeline", () => {
+    it("processes French text and removes stopwords", () => {
+      const result = processFrenchPipeline("Le café est déjà résumé avec élégance");
+      assert.ok(result.containsFrench, "Should detect French");
+      assert.ok(!result.withoutStopwords.includes("le"), "Should remove French stopwords");
+      assert.ok(result.withoutStopwords.includes("café"), "Should keep non-stopwords");
+    });
+
+    it("returns French statistics and word frequency", () => {
+      const result = processFrenchPipeline("Bonjour le monde cruel");
+      assert.strictEqual(result.statistics.words, 4);
+      assert.ok(Array.isArray(result.wordFrequency), "Should return wordFrequency array");
+      assert.ok(result.wordFrequency.some((w) => w.word === "monde"), "Should include frequent words");
+    });
+  });
+
+  describe("Arabic morphological hints and summarization", () => {
+    it("returns morphological hints for Arabic text", () => {
+      const result = processArabicPipeline("الكتاب موجود على الطاولة", { applyOcrCorrections: true });
+      assert.ok(result.morphologicalHints, "Should include morphologicalHints");
+      assert.ok(Array.isArray(result.morphologicalHints.prefixes), "Should include prefixes");
+      assert.ok(Array.isArray(result.morphologicalHints.suffixes), "Should include suffixes");
+      assert.ok(Array.isArray(result.morphologicalHints.likelyRoots), "Should include likelyRoots");
+    });
+
+    it("returns Arabic summary for long text", () => {
+      const longText = "هذا هو النص الأول. هذا هو النص الثاني الذي يحتوي على معلومات أكثر. هذا هو النص الثالث.";
+      const result = processArabicPipeline(longText, { applyOcrCorrections: true });
+      assert.ok(result.summary, "Should include summary");
+      assert.ok(result.summary.includes("النص"), "Summary should preserve Arabic content");
     });
   });
 });
