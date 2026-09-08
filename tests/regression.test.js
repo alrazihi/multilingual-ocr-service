@@ -271,6 +271,26 @@ describe("OCR Service Regression Tests", () => {
       assert.ok(Array.isArray(result.wordFrequency), "Should return wordFrequency array");
       assert.ok(result.wordFrequency.some((w) => w.word === "monde"), "Should include frequent words");
     });
+
+    it("detects French plurals and lemmas", () => {
+      const result = processFrenchPipeline("les enfants et les maisons");
+      assert.ok(result.plurals.some((p) => p.plural === "enfants" && p.singular === "enfant"), "Should detect plural enfants");
+      assert.ok(result.lemmas.some((l) => l.word === "maisons" && l.lemma === "maison"), "Should provide lemma for maisons");
+    });
+
+    it("detects French gender by suffix", () => {
+      const result = processFrenchPipeline("la maison et le tableau");
+      const feminine = result.genders.filter((g) => g.gender === "feminine");
+      const masculine = result.genders.filter((g) => g.gender === "masculine");
+      assert.ok(feminine.some((g) => g.word === "maison"), "Should detect maison as feminine");
+      assert.ok(masculine.some((g) => g.word === "tableau"), "Should detect tableau as masculine");
+    });
+
+    it("normalizes French accents in ascii mode", () => {
+      const result = processFrenchPipeline("Café été résumé", { accentMode: "ascii" });
+      assert.ok(!result.normalizedText.includes("é"), "Should remove accents in ascii mode");
+      assert.ok(result.normalizedText.includes("Cafe"), "Should keep base letters");
+    });
   });
 
   describe("Arabic morphological hints and summarization", () => {
@@ -287,6 +307,20 @@ describe("OCR Service Regression Tests", () => {
       const result = processArabicPipeline(longText, { applyOcrCorrections: true });
       assert.ok(result.summary, "Should include summary");
       assert.ok(result.summary.includes("النص"), "Summary should preserve Arabic content");
+    });
+
+    it("detects Arabic verb patterns and named entities", () => {
+      const result = processArabicPipeline("الكتاب موجود في المكتبة", { applyOcrCorrections: true });
+      assert.ok(result.morphologicalHints.namedEntities.some((n) => n.type === "definite noun"), "Should detect definite nouns");
+      assert.ok(result.morphologicalHints.prefixes.some((p) => p.prefix === "ال"), "Should detect alif-lam prefix");
+    });
+
+    it("returns Arabic text complexity score", () => {
+      const simple = processArabicPipeline("كتاب موجود", { applyOcrCorrections: true });
+      const complex = processArabicPipeline("المعلوماتية والتكنولوجيا المتقدمة", { applyOcrCorrections: true });
+      assert.ok(simple.complexity.score >= 0, "Should return complexity score");
+      assert.ok(complex.complexity.score >= 0, "Should return complexity score for complex text");
+      assert.ok(["simple", "moderate", "complex"].includes(simple.complexity.level), "Should return valid complexity level");
     });
   });
 });

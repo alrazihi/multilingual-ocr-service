@@ -199,6 +199,20 @@ function cleanOcrText(text) {
 
 const ARABIC_PREFIXES = new Set(["ال", "لل", "و", "ف", "ب", "ك", "ل", "ي", "ت", "ن", "س", "أ", "إ", "آ", "م", "ه", "ها", "هم", "هن", "كم", "كن", "نا"]);
 const ARABIC_SUFFIXES = new Set(["ون", "ات", "ين", "ان", "تا", "تين", "ات", "اء", "و", "ا", "ة", "ه", "ها", "هم", "هن", "كم", "كن", "نا", "ي"]);
+const ARABIC_VERB_PATTERNS = {
+  I: /^[وف][ا].*[ى]$/,
+  II: /^.*ّ.*$/,
+  III: /^.*[ا].*[ى]$/,
+  IV: /^[أا].*[ى]$/,
+  V: /^.*ت.*$/,
+  VI: /^.*[ت].*[ى]$/,
+  VII: /^[أن].*[ى]$/,
+  VIII: /^.*[ت].*$/,
+  IX: /^.*[ع].*[ى]$/,
+  X: /^[است].*[ى]$/,
+  I_REFLEXIVE: /^[ت][ا].*[ى]$/,
+  COMMON: /^[ي].*[ى]$/,
+};
 
 function getArabicMorphologicalHints(text) {
   if (!text) return { prefixes: [], suffixes: [], likelyRoots: [] };
@@ -206,9 +220,16 @@ function getArabicMorphologicalHints(text) {
   const prefixes = [];
   const suffixes = [];
   const likelyRoots = [];
+  const verbPatterns = [];
+  const nounPatterns = [];
+  const namedEntities = [];
+  const arabicLetters = /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]/g;
 
   for (const token of tokens) {
     if (token.length < 3) continue;
+    const hasArabic = (token.match(arabicLetters) || []).length;
+    if (hasArabic < 2) continue;
+
     for (const prefix of ARABIC_PREFIXES) {
       if (token.startsWith(prefix) && token.length > prefix.length + 1) {
         prefixes.push({ token, prefix, remaining: token.slice(prefix.length) });
@@ -224,13 +245,49 @@ function getArabicMorphologicalHints(text) {
     if (token.length >= 3 && token.length <= 6 && !prefixes.some((p) => p.token === token) && !suffixes.some((s) => s.token === token)) {
       likelyRoots.push(token);
     }
+
+    for (const [form, pattern] of Object.entries(ARABIC_VERB_PATTERNS)) {
+      if (pattern.test(token)) {
+        verbPatterns.push({ token, form });
+        break;
+      }
+    }
+
+    if (token.length >= 4 && token.startsWith("ال") && !namedEntities.some((n) => n.token === token)) {
+      namedEntities.push({ token, type: "definite noun" });
+    }
+    if (hasArabic >= 3 && /[A-Z]/.test(token)) {
+      namedEntities.push({ token, type: "proper noun" });
+    }
   }
 
   return {
     prefixes: prefixes.slice(0, 20),
     suffixes: suffixes.slice(0, 20),
     likelyRoots: [...new Set(likelyRoots)].slice(0, 20),
+    verbPatterns: verbPatterns.slice(0, 20),
+    nounPatterns: nounPatterns.slice(0, 20),
+    namedEntities: namedEntities.slice(0, 20),
   };
+}
+
+function getArabicTextComplexity(text) {
+  if (!text) return { score: 0, level: "unknown" };
+  const tokens = tokenizeArabicText(text);
+  if (tokens.length === 0) return { score: 0, level: "unknown" };
+
+  const avgWordLength = tokens.reduce((sum, t) => sum + t.length, 0) / tokens.length;
+  const longWords = tokens.filter((t) => t.length > 7).length;
+  const diacriticCount = (text.match(/[ًٌٍَُِّْ]/g) || []).length;
+  const lamPrefixCount = (text.match(/ل\s/g) || []).length;
+
+  const score = Math.min(100, Math.round((avgWordLength * 5) + (longWords * 3) + (diacriticCount * 0.5) + (lamPrefixCount * 2)));
+
+  let level = "simple";
+  if (score > 60) level = "complex";
+  else if (score > 35) level = "moderate";
+
+  return { score, level, avgWordLength, longWords, diacriticCount, lamPrefixCount };
 }
 
 function summarizeArabicText(text, maxSentences = 3) {
@@ -276,6 +333,7 @@ function processArabicPipeline(text, options = {}) {
   const statistics = getArabicTextStatistics(normalizedText);
   const morphologicalHints = arabicDetected ? getArabicMorphologicalHints(normalizedText) : null;
   const summary = arabicDetected ? summarizeArabicText(rtlEnforcedText) : null;
+  const complexity = arabicDetected ? getArabicTextComplexity(normalizedText) : null;
 
   return {
     text: cleanedText,
@@ -294,6 +352,7 @@ function processArabicPipeline(text, options = {}) {
     statistics,
     morphologicalHints,
     summary,
+    complexity,
   };
 }
 
@@ -312,6 +371,7 @@ module.exports = {
   tokenizeArabicText,
   getArabicTextStatistics,
   getArabicMorphologicalHints,
+  getArabicTextComplexity,
   summarizeArabicText,
   containsArabic,
   detectTextDirection,

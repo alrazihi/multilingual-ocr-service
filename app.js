@@ -382,12 +382,16 @@ app.post("/text/arabic/analyze", express.text({ type: "text/plain", limit: "1mb"
     wordFrequency: sortedFrequency,
     morphologicalHints: pipeline.morphologicalHints,
     summary: pipeline.summary,
+    complexity: pipeline.complexity,
   });
 });
 
 app.post("/text/french/normalize", express.text({ type: "text/plain", limit: "1mb" }), (req, res) => {
   const text = req.body || "";
-  const pipeline = processFrenchPipeline(text);
+  const query = req.query;
+  const accentMode = query.accentMode || "default";
+
+  const pipeline = processFrenchPipeline(text, { accentMode });
 
   res.json({
     ...pipeline,
@@ -397,7 +401,10 @@ app.post("/text/french/normalize", express.text({ type: "text/plain", limit: "1m
 
 app.post("/text/french/analyze", express.text({ type: "text/plain", limit: "1mb" }), (req, res) => {
   const text = req.body || "";
-  const pipeline = processFrenchPipeline(text);
+  const query = req.query;
+  const accentMode = query.accentMode || "default";
+
+  const pipeline = processFrenchPipeline(text, { accentMode });
 
   res.json({
     ...pipeline,
