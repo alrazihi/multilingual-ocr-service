@@ -84,6 +84,13 @@ function detectBarcodes(imagePath) {
   });
 }
 
+function detectTables(imagePath) {
+  return new Promise((resolve) => {
+    const tables = [];
+    resolve({ detected: false, count: 0, tables });
+  });
+}
+
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     const uploadDir = path.join(__dirname, "uploads");
@@ -167,6 +174,7 @@ app.post("/ocr", uploadLimiter, upload.single("file"), async (req, res) => {
       const result = await runOcr(buffer, lang);
       const confidenceWarning = checkConfidenceThreshold(result.confidence);
       const barcodes = await detectBarcodes(req.file.path);
+      const tables = await detectTables(req.file.path);
       res.json({
         text: cleanOcrText(result.text),
         language: lang,
@@ -175,6 +183,7 @@ app.post("/ocr", uploadLimiter, upload.single("file"), async (req, res) => {
         warning: confidenceWarning.warning,
         warningMessage: confidenceWarning.message,
         barcodes,
+        tables,
       });
     }
   } catch (err) {
@@ -224,6 +233,7 @@ app.post("/ocr/batch", uploadLimiter, upload.array("files", 10), async (req, res
         const ocrResult = await runOcr(buffer, lang);
         const confidenceWarning = checkConfidenceThreshold(ocrResult.confidence);
         const barcodes = await detectBarcodes(file.path);
+        const tables = await detectTables(file.path);
         result = {
           text: cleanOcrText(ocrResult.text),
           language: lang,
@@ -232,6 +242,7 @@ app.post("/ocr/batch", uploadLimiter, upload.array("files", 10), async (req, res
           warning: confidenceWarning.warning,
           warningMessage: confidenceWarning.message,
           barcodes,
+          tables,
         };
       }
       results.push({ file: file.originalname, ...result });
