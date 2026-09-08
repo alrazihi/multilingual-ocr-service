@@ -30,6 +30,7 @@ const uploadLimiter = rateLimit({
 const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/tiff", "image/bmp"];
 const ALLOWED_EXTENSIONS = [".png", ".jpg", ".jpeg", ".tiff", ".bmp", ".pdf"];
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
+const MIN_FILE_SIZE = 1024;
 
 function validateImageFormat(file) {
   const ext = path.extname(file.originalname).toLowerCase();
@@ -38,6 +39,16 @@ function validateImageFormat(file) {
   }
   if (file.mimetype && !ALLOWED_IMAGE_TYPES.includes(file.mimetype) && file.mimetype !== "application/pdf") {
     return `Unsupported MIME type: ${file.mimetype}`;
+  }
+  return null;
+}
+
+function validateFileSize(file) {
+  if (!file.size || file.size < MIN_FILE_SIZE) {
+    return `File too small: ${file.size} bytes. Minimum: ${MIN_FILE_SIZE} bytes`;
+  }
+  if (file.size > MAX_FILE_SIZE) {
+    return `File too large: ${file.size} bytes. Maximum: ${MAX_FILE_SIZE} bytes`;
   }
   return null;
 }
@@ -100,6 +111,12 @@ app.post("/ocr", uploadLimiter, upload.single("file"), async (req, res) => {
     return res.status(400).json({ error: formatError });
   }
 
+  const sizeError = validateFileSize(req.file);
+  if (sizeError) {
+    if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+    return res.status(400).json({ error: sizeError });
+  }
+
   const lang = req.body.lang || "eng";
   const validLangs = ["eng", "ara", "fra", "eng+ara", "eng+fra", "ara+fra", "eng+ara+fra"];
   if (!validLangs.includes(lang)) {
@@ -142,6 +159,13 @@ app.post("/ocr/batch", uploadLimiter, upload.array("files", 10), async (req, res
     const formatError = validateImageFormat(file);
     if (formatError) {
       results.push({ file: file.originalname, error: formatError });
+      if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
+      continue;
+    }
+
+    const sizeError = validateFileSize(file);
+    if (sizeError) {
+      results.push({ file: file.originalname, error: sizeError });
       if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
       continue;
     }
