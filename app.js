@@ -201,6 +201,18 @@ function filterNonsenseArabicWords(text) {
   return filtered.join(" ");
 }
 
+function enforceRtlDirection(text) {
+  if (!text) return "";
+  const hasArabic = containsArabic(text);
+  if (!hasArabic) return text;
+  const rtlMark = "\u200F";
+  const cleaned = text.replace(/\u200F/g, "").trim();
+  if (/^[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]/.test(cleaned)) {
+    return `${rtlMark}${cleaned}`;
+  }
+  return cleaned;
+}
+
 const ARABIC_STOPWORDS = new Set([
   "من",
   "إلى",
@@ -384,6 +396,7 @@ app.post("/ocr", uploadLimiter, upload.single("file"), async (req, res) => {
       const spacingFixedText = fixArabicSpacing(easternNumeralsText);
       const lamAlefReconstructed = reconstructLamAlef(spacingFixedText);
       const punctuationFixedText = normalizeArabicPunctuation(lamAlefReconstructed);
+      const rtlEnforcedText = enforceRtlDirection(punctuationFixedText);
       const statistics = arabicDetected ? getArabicTextStatistics(correctedText) : null;
       res.json({
         text: cleanedText,
@@ -395,6 +408,7 @@ app.post("/ocr", uploadLimiter, upload.single("file"), async (req, res) => {
         spacingFixedText,
         lamAlefReconstructed,
         punctuationFixedText,
+        rtlEnforcedText,
         language: lang,
         confidence: result.confidence,
         words: result.words?.length || 0,
@@ -471,6 +485,7 @@ app.post("/ocr/batch", uploadLimiter, upload.array("files", 10), async (req, res
         const spacingFixedText = fixArabicSpacing(easternNumeralsText);
         const lamAlefReconstructed = reconstructLamAlef(spacingFixedText);
         const punctuationFixedText = normalizeArabicPunctuation(lamAlefReconstructed);
+        const rtlEnforcedText = enforceRtlDirection(punctuationFixedText);
         const statistics = arabicDetected ? getArabicTextStatistics(correctedText) : null;
         result = {
           text: cleanedText,
@@ -482,6 +497,7 @@ app.post("/ocr/batch", uploadLimiter, upload.array("files", 10), async (req, res
           spacingFixedText,
           lamAlefReconstructed,
           punctuationFixedText,
+          rtlEnforcedText,
           language: lang,
           confidence: ocrResult.confidence,
           words: ocrResult.words?.length || 0,
@@ -521,6 +537,7 @@ app.post("/ocr/arabic", express.text({ type: "text/plain", limit: "1mb" }), (req
   const spacingFixedText = fixArabicSpacing(easternNumeralsText);
   const lamAlefReconstructed = reconstructLamAlef(spacingFixedText);
   const punctuationFixedText = normalizeArabicPunctuation(lamAlefReconstructed);
+  const rtlEnforcedText = enforceRtlDirection(punctuationFixedText);
   const withoutStopwords = removeArabicStopwords(normalizedText);
   const statistics = getArabicTextStatistics(normalizedText);
 
@@ -534,6 +551,7 @@ app.post("/ocr/arabic", express.text({ type: "text/plain", limit: "1mb" }), (req
     spacingFixedText,
     lamAlefReconstructed,
     punctuationFixedText,
+    rtlEnforcedText,
     withoutStopwords,
     containsArabic: arabicDetected,
     direction,
@@ -557,6 +575,7 @@ app.post("/ocr/arabic/analyze", express.text({ type: "text/plain", limit: "1mb" 
   const spacingFixedText = fixArabicSpacing(easternNumeralsText);
   const lamAlefReconstructed = reconstructLamAlef(spacingFixedText);
   const punctuationFixedText = normalizeArabicPunctuation(lamAlefReconstructed);
+  const rtlEnforcedText = enforceRtlDirection(punctuationFixedText);
   const withoutStopwords = removeArabicStopwords(normalizedText);
   const tokens = tokenizeArabicText(normalizedText);
   const wordFrequency = {};
@@ -578,6 +597,7 @@ app.post("/ocr/arabic/analyze", express.text({ type: "text/plain", limit: "1mb" 
     spacingFixedText,
     lamAlefReconstructed,
     punctuationFixedText,
+    rtlEnforcedText,
     withoutStopwords,
     containsArabic: arabicDetected,
     direction,
