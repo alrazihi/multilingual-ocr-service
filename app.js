@@ -96,15 +96,24 @@ function detectTextDirection(text) {
   return "ltr";
 }
 
-function normalizeArabicText(text) {
+function normalizeArabicText(text, options = {}) {
   if (!text) return "";
-  return text
-    .replace(/[أإآٱ]/g, "ا")
-    .replace(/ة/g, "ه")
-    .replace(/ى/g, "ي")
-    .replace(/ـ/g, "")
-    .replace(/[\u064B-\u065F\u0670\u06D6-\u06DC\u06DF-\u06E8\u06EA-\u06ED]/g, "")
-    .trim();
+  const { preserveHamza = false, preserveTatweel = false, removeDiacritics = true } = options;
+  let normalized = text;
+  if (!preserveHamza) {
+    normalized = normalized.replace(/[أإآٱ]/g, "ا");
+  }
+  if (!options.preserveTaMarbuta) {
+    normalized = normalized.replace(/ة/g, "ه");
+  }
+  normalized = normalized.replace(/ى/g, "ي");
+  if (!preserveTatweel) {
+    normalized = normalized.replace(/ـ/g, "");
+  }
+  if (removeDiacritics) {
+    normalized = normalized.replace(/[\u064B-\u065F\u0670\u06D6-\u06DC\u06DF-\u06E8\u06EA-\u06ED]/g, "");
+  }
+  return normalized.trim();
 }
 
 function convertToEasternArabicNumerals(text) {
@@ -268,6 +277,8 @@ app.post("/ocr", uploadLimiter, upload.single("file"), async (req, res) => {
   }
 
   const convertNumerals = req.body.convertNumerals === "true";
+  const preserveHamza = req.body.preserveHamza === "true";
+  const preserveTaMarbuta = req.body.preserveTaMarbuta === "true";
 
   try {
     const ext = path.extname(req.file.originalname).toLowerCase();
@@ -285,7 +296,7 @@ app.post("/ocr", uploadLimiter, upload.single("file"), async (req, res) => {
       const cleanedText = cleanOcrText(result.text);
       const arabicDetected = containsArabic(cleanedText);
       const direction = detectTextDirection(cleanedText);
-      const normalizedText = arabicDetected ? normalizeArabicText(cleanedText) : cleanedText;
+        const normalizedText = arabicDetected ? normalizeArabicText(cleanedText, { preserveHamza, preserveTaMarbuta }) : cleanedText;
       const easternNumeralsText = convertNumerals ? convertToEasternArabicNumerals(normalizedText) : normalizedText;
       const statistics = arabicDetected ? getArabicTextStatistics(normalizedText) : null;
       res.json({
@@ -322,6 +333,8 @@ app.post("/ocr/batch", uploadLimiter, upload.array("files", 10), async (req, res
   }
 
   const convertNumerals = req.body.convertNumerals === "true";
+  const preserveHamza = req.body.preserveHamza === "true";
+  const preserveTaMarbuta = req.body.preserveTaMarbuta === "true";
 
   const results = [];
 
@@ -357,7 +370,7 @@ app.post("/ocr/batch", uploadLimiter, upload.array("files", 10), async (req, res
         const cleanedText = cleanOcrText(ocrResult.text);
         const arabicDetected = containsArabic(cleanedText);
         const direction = detectTextDirection(cleanedText);
-        const normalizedText = arabicDetected ? normalizeArabicText(cleanedText) : cleanedText;
+      const normalizedText = arabicDetected ? normalizeArabicText(cleanedText, { preserveHamza, preserveTaMarbuta }) : cleanedText;
         const easternNumeralsText = convertNumerals ? convertToEasternArabicNumerals(normalizedText) : normalizedText;
         const statistics = arabicDetected ? getArabicTextStatistics(normalizedText) : null;
         result = {
@@ -392,7 +405,9 @@ app.post("/ocr/arabic", express.text({ type: "text/plain", limit: "1mb" }), (req
   const cleanedText = cleanOcrText(text);
   const arabicDetected = containsArabic(cleanedText);
   const direction = detectTextDirection(cleanedText);
-  const normalizedText = arabicDetected ? normalizeArabicText(cleanedText) : cleanedText;
+  const preserveHamza = req.body.preserveHamza === "true";
+  const preserveTaMarbuta = req.body.preserveTaMarbuta === "true";
+  const normalizedText = arabicDetected ? normalizeArabicText(cleanedText, { preserveHamza, preserveTaMarbuta }) : cleanedText;
   const easternNumeralsText = convertToEasternArabicNumerals(normalizedText);
   const withoutStopwords = removeArabicStopwords(normalizedText);
   const statistics = getArabicTextStatistics(normalizedText);
@@ -413,7 +428,9 @@ app.post("/ocr/arabic/analyze", express.text({ type: "text/plain", limit: "1mb" 
   const cleanedText = cleanOcrText(text);
   const arabicDetected = containsArabic(cleanedText);
   const direction = detectTextDirection(cleanedText);
-  const normalizedText = arabicDetected ? normalizeArabicText(cleanedText) : cleanedText;
+  const preserveHamza = req.body.preserveHamza === "true";
+  const preserveTaMarbuta = req.body.preserveTaMarbuta === "true";
+  const normalizedText = arabicDetected ? normalizeArabicText(cleanedText, { preserveHamza, preserveTaMarbuta }) : cleanedText;
   const easternNumeralsText = convertToEasternArabicNumerals(normalizedText);
   const withoutStopwords = removeArabicStopwords(normalizedText);
   const tokens = tokenizeArabicText(normalizedText);
