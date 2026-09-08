@@ -69,6 +69,14 @@ function checkConfidenceThreshold(confidence, threshold = DEFAULT_CONFIDENCE_THR
   return { warning: false };
 }
 
+function cleanOcrText(text) {
+  if (!text) return "";
+  return text
+    .replace(/\s+/g, " ")
+    .replace(/[^\x20-\x7E\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]/g, "")
+    .trim();
+}
+
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     const uploadDir = path.join(__dirname, "uploads");
@@ -146,13 +154,13 @@ app.post("/ocr", uploadLimiter, upload.single("file"), async (req, res) => {
       const pdfParse = require("pdf-parse");
       const dataBuffer = fs.readFileSync(req.file.path);
       const pdfData = await pdfParse(dataBuffer);
-      res.json({ text: pdfData.text, language: lang, pages: 1 });
+      res.json({ text: cleanOcrText(pdfData.text), language: lang, pages: 1 });
     } else {
       const buffer = await preprocessImage(req.file.path);
       const result = await runOcr(buffer, lang);
       const confidenceWarning = checkConfidenceThreshold(result.confidence);
       res.json({
-        text: result.text,
+        text: cleanOcrText(result.text),
         language: lang,
         confidence: result.confidence,
         words: result.words?.length || 0,
@@ -201,13 +209,13 @@ app.post("/ocr/batch", uploadLimiter, upload.array("files", 10), async (req, res
         const pdfParse = require("pdf-parse");
         const dataBuffer = fs.readFileSync(file.path);
         const pdfData = await pdfParse(dataBuffer);
-        result = { text: pdfData.text, language: lang, pages: 1 };
+        result = { text: cleanOcrText(pdfData.text), language: lang, pages: 1 };
       } else {
         const buffer = await preprocessImage(file.path);
         const ocrResult = await runOcr(buffer, lang);
         const confidenceWarning = checkConfidenceThreshold(ocrResult.confidence);
         result = {
-          text: ocrResult.text,
+          text: cleanOcrText(ocrResult.text),
           language: lang,
           confidence: ocrResult.confidence,
           words: ocrResult.words?.length || 0,
