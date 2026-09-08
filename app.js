@@ -31,6 +31,7 @@ const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/tiff", "image/bmp
 const ALLOWED_EXTENSIONS = [".png", ".jpg", ".jpeg", ".tiff", ".bmp", ".pdf"];
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
 const MIN_FILE_SIZE = 1024;
+const VALID_LANGUAGES = ["eng", "ara", "fra", "eng+ara", "eng+fra", "ara+fra", "eng+ara+fra"];
 
 function validateImageFormat(file) {
   const ext = path.extname(file.originalname).toLowerCase();
@@ -49,6 +50,13 @@ function validateFileSize(file) {
   }
   if (file.size > MAX_FILE_SIZE) {
     return `File too large: ${file.size} bytes. Maximum: ${MAX_FILE_SIZE} bytes`;
+  }
+  return null;
+}
+
+function validateLanguage(lang) {
+  if (!VALID_LANGUAGES.includes(lang)) {
+    return `Unsupported language: ${lang}. Allowed: ${VALID_LANGUAGES.join(", ")}`;
   }
   return null;
 }
@@ -118,10 +126,10 @@ app.post("/ocr", uploadLimiter, upload.single("file"), async (req, res) => {
   }
 
   const lang = req.body.lang || "eng";
-  const validLangs = ["eng", "ara", "fra", "eng+ara", "eng+fra", "ara+fra", "eng+ara+fra"];
-  if (!validLangs.includes(lang)) {
+  const langError = validateLanguage(lang);
+  if (langError) {
     if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
-    return res.status(400).json({ error: `Unsupported language: ${lang}` });
+    return res.status(400).json({ error: langError });
   }
 
   try {
@@ -153,6 +161,11 @@ app.post("/ocr/batch", uploadLimiter, upload.array("files", 10), async (req, res
   if (!req.files?.length) return res.status(400).json({ error: "No files uploaded" });
 
   const lang = req.body.lang || "eng";
+  const langError = validateLanguage(lang);
+  if (langError) {
+    return res.status(400).json({ error: langError });
+  }
+
   const results = [];
 
   for (const file of req.files) {
