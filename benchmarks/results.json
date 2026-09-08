@@ -1,0 +1,20 @@
+{
+  "english": {
+    "cer": null,
+    "wer": null,
+    "dataset": "ICDAR 2015",
+    "notes": "Awaiting evaluation run"
+  },
+  "arabic": {
+    "cer": null,
+    "wer": null,
+    "dataset": "ICDAR 2015",
+    "notes": "RTL preprocessing included"
+  },
+  "french": {
+    "cer": null,
+    "wer": null,
+    "dataset": "ICDAR 2015",
+    "notes": "Accent handling included"
+  }
+}
