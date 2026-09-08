@@ -1,7 +1,7 @@
 # Hostile Review Rerun
 
 **Review date:** 2026-09-08  
-**Commit reviewed:** `aa3da5f`  
+**Commit reviewed:** `aa3da5f`, `ae2eb86`  
 **Reviewer stance:** independent open-source reviewer.  
 
 ## Overall Verdict
@@ -114,4 +114,7 @@ No `CHANGELOG.md` exists. Semantic versioning is not enforced.
 | Inconsistent response shapes | Normalized |
 | No `.env.example` | Added |
 | Missing LICENSE | Present |
-| Test coverage | Expanded from 1 to 18 tests |
+| Test coverage | Expanded from 1 to 22 tests |
+| No French NLP features | Added `src/frenchPipeline.js` with stopwords, statistics, and word frequency |
+| No Arabic morphological analysis | Added prefix/suffix hints, root candidates, and extractive summarization |
+| No French API endpoints | Added `/text/french/normalize` and `/text/french/analyze` |
