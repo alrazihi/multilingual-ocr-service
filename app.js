@@ -32,6 +32,7 @@ const ALLOWED_EXTENSIONS = [".png", ".jpg", ".jpeg", ".tiff", ".bmp", ".pdf"];
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
 const MIN_FILE_SIZE = 1024;
 const VALID_LANGUAGES = ["eng", "ara", "fra", "eng+ara", "eng+fra", "ara+fra", "eng+ara+fra"];
+const DEFAULT_CONFIDENCE_THRESHOLD = 60;
 
 function validateImageFormat(file) {
   const ext = path.extname(file.originalname).toLowerCase();
@@ -59,6 +60,13 @@ function validateLanguage(lang) {
     return `Unsupported language: ${lang}. Allowed: ${VALID_LANGUAGES.join(", ")}`;
   }
   return null;
+}
+
+function checkConfidenceThreshold(confidence, threshold = DEFAULT_CONFIDENCE_THRESHOLD) {
+  if (confidence < threshold) {
+    return { warning: true, message: `Low OCR confidence: ${confidence}% (threshold: ${threshold}%)` };
+  }
+  return { warning: false };
 }
 
 const storage = multer.diskStorage({
@@ -142,11 +150,14 @@ app.post("/ocr", uploadLimiter, upload.single("file"), async (req, res) => {
     } else {
       const buffer = await preprocessImage(req.file.path);
       const result = await runOcr(buffer, lang);
+      const confidenceWarning = checkConfidenceThreshold(result.confidence);
       res.json({
         text: result.text,
         language: lang,
         confidence: result.confidence,
         words: result.words?.length || 0,
+        warning: confidenceWarning.warning,
+        warningMessage: confidenceWarning.message,
       });
     }
   } catch (err) {
@@ -194,11 +205,14 @@ app.post("/ocr/batch", uploadLimiter, upload.array("files", 10), async (req, res
       } else {
         const buffer = await preprocessImage(file.path);
         const ocrResult = await runOcr(buffer, lang);
+        const confidenceWarning = checkConfidenceThreshold(ocrResult.confidence);
         result = {
           text: ocrResult.text,
           language: lang,
           confidence: ocrResult.confidence,
           words: ocrResult.words?.length || 0,
+          warning: confidenceWarning.warning,
+          warningMessage: confidenceWarning.message,
         };
       }
       results.push({ file: file.originalname, ...result });
